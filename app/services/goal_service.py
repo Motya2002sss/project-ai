@@ -1,5 +1,6 @@
 from sqlalchemy.orm import Session
 
+from app.llm.schemas import ParsedTask
 from app.models.goal import Goal
 from app.models.user import User
 
@@ -71,3 +72,62 @@ def format_goals(goals: list[Goal]) -> str:
         lines.append(f"{goal.id}. {goal.title} — {goal.priority}")
 
     return "\n".join(lines)
+
+
+def suggest_tasks_from_goals(goals: list[Goal]) -> list[ParsedTask]:
+    suggestions: list[ParsedTask] = []
+
+    for goal in goals:
+        title = goal.title.lower()
+
+        if any(word in title for word in ["жим", "120", "зал", "масса", "трен"]):
+            suggestions.append(
+                ParsedTask(
+                    title="Тренировка: жим/зал по программе",
+                    priority="high",
+                    estimated_minutes=60,
+                )
+            )
+            continue
+
+        if "англий" in title:
+            suggestions.append(
+                ParsedTask(
+                    title="Английский 30–45 минут",
+                    priority="high",
+                    estimated_minutes=45,
+                )
+            )
+            continue
+
+        if any(word in title for word in ["ai", "planner", "планер", "проект", "бот", "продукт"]):
+            suggestions.append(
+                ParsedTask(
+                    title="Сделать один конкретный шаг по AI Life Planner",
+                    priority="high",
+                    estimated_minutes=90,
+                )
+            )
+            continue
+
+        suggestions.append(
+            ParsedTask(
+                title=f"Сделать маленький шаг по цели: {goal.title}",
+                priority="medium",
+                estimated_minutes=45,
+            )
+        )
+
+    unique: list[ParsedTask] = []
+    seen: set[str] = set()
+
+    for task in suggestions:
+        key = task.title.lower()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(task)
+
+    return unique

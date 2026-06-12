@@ -1,26 +1,42 @@
+from datetime import date, timedelta
+
 from sqlalchemy.orm import Session
 
 from app.llm.parser import parse_user_message
-from app.llm.schemas import ParsedUserMessage
+from app.llm.schemas import ParsedTask, ParsedUserMessage
 from app.models.task import Task
 from app.models.user import User
 
 
-def create_tasks_from_parsed_message(
+def _get_task_target_date(parsed_message: ParsedUserMessage | None = None) -> date:
+    if parsed_message and parsed_message.date == "tomorrow":
+        return date.today() + timedelta(days=1)
+
+    return date.today()
+
+
+def create_tasks_from_parsed_tasks(
     db: Session,
     user: User,
-    parsed_message: ParsedUserMessage,
+    parsed_tasks: list[ParsedTask],
+    parsed_message: ParsedUserMessage | None = None,
 ) -> list[Task]:
     tasks: list[Task] = []
+    target_date = _get_task_target_date(parsed_message)
 
-    for parsed_task in parsed_message.tasks:
-        task = Task(
-            user_id=user.id,
-            title=parsed_task.title,
-            priority=parsed_task.priority,
-            estimated_minutes=parsed_task.estimated_minutes,
-            status="planned",
-        )
+    for parsed_task in parsed_tasks:
+        task_data = {
+            "user_id": user.id,
+            "title": parsed_task.title,
+            "priority": parsed_task.priority,
+            "estimated_minutes": parsed_task.estimated_minutes,
+            "status": "planned",
+        }
+
+        if hasattr(Task, "target_date"):
+            task_data["target_date"] = target_date
+
+        task = Task(**task_data)
 
         db.add(task)
         tasks.append(task)
@@ -31,6 +47,19 @@ def create_tasks_from_parsed_message(
         db.refresh(task)
 
     return tasks
+
+
+def create_tasks_from_parsed_message(
+    db: Session,
+    user: User,
+    parsed_message: ParsedUserMessage,
+) -> list[Task]:
+    return create_tasks_from_parsed_tasks(
+        db=db,
+        user=user,
+        parsed_tasks=parsed_message.tasks,
+        parsed_message=parsed_message,
+    )
 
 
 def create_tasks_from_text(

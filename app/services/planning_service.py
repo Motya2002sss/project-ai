@@ -141,6 +141,7 @@ def rebuild_day_plan(
         .filter(
             Task.user_id == user.id,
             Task.status == "planned",
+            Task.target_date == plan_date,
         )
         .all()
     )
