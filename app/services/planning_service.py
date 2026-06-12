@@ -16,6 +16,25 @@ PRIORITY_ORDER = {
 }
 
 
+def get_plan_date(parsed_message: ParsedUserMessage | None = None) -> date:
+    if parsed_message and parsed_message.date == "tomorrow":
+        return date.today() + timedelta(days=1)
+
+    return date.today()
+
+
+def format_plan_date(plan_date: date) -> str:
+    today = date.today()
+
+    if plan_date == today:
+        return "сегодня"
+
+    if plan_date == today + timedelta(days=1):
+        return "завтра"
+
+    return plan_date.strftime("%d.%m.%Y")
+
+
 def estimate_task_minutes(task: Task) -> int:
     if task.estimated_minutes:
         return task.estimated_minutes
@@ -45,26 +64,24 @@ def _parse_hhmm(value: str | None) -> time | None:
         return None
 
 
-def _start_time_from_parsed(user: User, parsed_message: ParsedUserMessage | None) -> time:
+def _start_time_from_parsed(user: User, parsed_message: ParsedUserMessage | None, plan_date: date) -> datetime:
     if parsed_message and parsed_message.work_until:
         work_until = _parse_hhmm(parsed_message.work_until)
 
         if work_until:
-            start_dt = datetime.combine(date.today(), work_until) + timedelta(minutes=30)
-            return start_dt.time()
+            return datetime.combine(plan_date, work_until) + timedelta(minutes=30)
 
     if user.work_end_time:
-        start_dt = datetime.combine(date.today(), user.work_end_time) + timedelta(minutes=30)
-        return start_dt.time()
+        return datetime.combine(plan_date, user.work_end_time) + timedelta(minutes=30)
 
-    return time(hour=18, minute=30)
+    return datetime.combine(plan_date, time(hour=18, minute=30))
 
 
 def _get_sleep_deadline(user: User, current_dt: datetime) -> datetime | None:
     if not user.sleep_time:
         return None
 
-    sleep_deadline = datetime.combine(date.today(), user.sleep_time)
+    sleep_deadline = datetime.combine(current_dt.date(), user.sleep_time)
 
     if sleep_deadline <= current_dt:
         sleep_deadline += timedelta(days=1)
@@ -72,14 +89,16 @@ def _get_sleep_deadline(user: User, current_dt: datetime) -> datetime | None:
     return sleep_deadline
 
 
-def get_or_create_today_plan(db: Session, user: User) -> DayPlan:
-    today = date.today()
-
+def get_or_create_day_plan(
+    db: Session,
+    user: User,
+    plan_date: date,
+) -> DayPlan:
     day_plan = (
         db.query(DayPlan)
         .filter(
             DayPlan.user_id == user.id,
-            DayPlan.date == today,
+            DayPlan.date == plan_date,
         )
         .one_or_none()
     )
@@ -89,7 +108,7 @@ def get_or_create_today_plan(db: Session, user: User) -> DayPlan:
 
     day_plan = DayPlan(
         user_id=user.id,
-        date=today,
+        date=plan_date,
         summary="Автоматический план дня",
         status="draft",
     )
@@ -101,12 +120,13 @@ def get_or_create_today_plan(db: Session, user: User) -> DayPlan:
     return day_plan
 
 
-def rebuild_today_plan(
+def rebuild_day_plan(
     db: Session,
     user: User,
     parsed_message: ParsedUserMessage | None = None,
 ) -> DayPlan:
-    day_plan = get_or_create_today_plan(db, user)
+    plan_date = get_plan_date(parsed_message)
+    day_plan = get_or_create_day_plan(db=db, user=user, plan_date=plan_date)
 
     if parsed_message:
         day_plan.energy_level = parsed_message.energy_level or day_plan.energy_level
@@ -133,10 +153,13 @@ def rebuild_today_plan(
         ),
     )
 
-    start_time = _start_time_from_parsed(user, parsed_message)
-    current_dt = datetime.combine(date.today(), start_time)
-    sleep_deadline = _get_sleep_deadline(user, current_dt)
+    current_dt = _start_time_from_parsed(
+        user=user,
+        parsed_message=parsed_message,
+        plan_date=plan_date,
+    )
 
+    sleep_deadline = _get_sleep_deadline(user, current_dt)
     has_overload = False
 
     for task in planned_tasks:
@@ -187,6 +210,10 @@ def rebuild_today_plan(
     return day_plan
 
 
+def rebuild_today_plan(db: Session, user: User) -> DayPlan:
+    return rebuild_day_plan(db=db, user=user, parsed_message=None)
+
+
 def format_day_plan(day_plan: DayPlan) -> str:
     items = list(day_plan.items)
 
@@ -201,8 +228,10 @@ def format_day_plan(day_plan: DayPlan) -> str:
 
     lines: list[str] = []
 
+    lines.append(f"План на {format_plan_date(day_plan.date)}:")
+
     if day_plan.budget_limit:
-        lines.append(f"Бюджет на день: {day_plan.budget_limit} ₽")
+        lines.append(f"Бюджет: {day_plan.budget_limit} ₽")
 
     if day_plan.energy_level:
         energy_map = {
@@ -212,8 +241,7 @@ def format_day_plan(day_plan: DayPlan) -> str:
         }
         lines.append(f"Энергия: {energy_map.get(day_plan.energy_level, day_plan.energy_level)}")
 
-    if lines:
-        lines.append("")
+    lines.append("")
 
     if scheduled_items:
         for item in scheduled_items:

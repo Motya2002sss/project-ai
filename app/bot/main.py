@@ -8,7 +8,7 @@ from aiogram.types import Message
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.llm.parser import parse_user_message
-from app.services.planning_service import format_day_plan, rebuild_today_plan
+from app.services.planning_service import format_day_plan, rebuild_day_plan, rebuild_today_plan
 from app.services.task_service import (
     clear_user_tasks,
     create_tasks_from_parsed_message,
@@ -186,7 +186,11 @@ async def handle_text_message(message: Message) -> None:
             return
 
         if parsed_message.intent == "show_plan":
-            day_plan = rebuild_today_plan(db=db, user=user)
+            day_plan = rebuild_day_plan(
+                db=db,
+                user=user,
+                parsed_message=parsed_message,
+            )
             plan_text = format_day_plan(day_plan)
 
             await message.answer(f"Текущий план дня:\n\n{plan_text}")
@@ -280,7 +284,7 @@ async def handle_text_message(message: Message) -> None:
             parsed_message=parsed_message,
         )
 
-        day_plan = rebuild_today_plan(
+        day_plan = rebuild_day_plan(
             db=db,
             user=user,
             parsed_message=parsed_message,
