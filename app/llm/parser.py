@@ -34,6 +34,13 @@ SKIP_PATTERNS = [
 ]
 
 
+def _normalize_time(hour: int, minute: int = 0) -> str | None:
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+
+    return f"{hour:02d}:{minute:02d}"
+
+
 def _clean_task_title(text: str) -> str:
     text = text.strip(" \n\t.,;:-")
 
@@ -45,13 +52,6 @@ def _clean_task_title(text: str) -> str:
     )
 
     return text.strip(" \n\t.,;:-")
-
-
-def _normalize_time(hour: int, minute: int = 0) -> str | None:
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
-        return None
-
-    return f"{hour:02d}:{minute:02d}"
 
 
 def _estimate_minutes(title: str) -> int:
@@ -104,7 +104,6 @@ def _extract_work_start(text: str) -> str | None:
 
 
 def _extract_work_until(text: str) -> str | None:
-    # Сначала кейс "с 9 до 18"
     match = re.search(
         r"(?:работаю|работа|график)[^\d]*(?:с|от)\s*\d{1,2}(?::\d{2})?\s*(?:до|-)\s*(\d{1,2})(?::(\d{2}))?",
         text,
@@ -163,6 +162,52 @@ def _extract_date(text: str) -> str | None:
     return None
 
 
+def _clean_goal_title(text: str) -> str:
+    cleaned = text.strip(" \n\t.,;:-")
+
+    cleaned = re.sub(
+        r"^(моя|мои|главная|основная)?\s*(цель|цели)\s*[:\-]?\s*",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    cleaned = re.sub(
+        r"^(хочу|надо|нужно|планирую)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
+    return cleaned.strip(" \n\t.,;:-")
+
+
+def _extract_goals(text: str) -> list[str]:
+    lowered = text.lower()
+
+    if "цель" not in lowered and "цели" not in lowered:
+        return []
+
+    cleaned = re.sub(
+        r"^(мои\s+цели|моя\s+цель|цели|цель)\s*[:\-]?\s*",
+        "",
+        text.strip(),
+        flags=re.IGNORECASE,
+    )
+
+    parts = re.split(r"[,;\n]|\s+и\s+", cleaned)
+
+    goals: list[str] = []
+
+    for part in parts:
+        title = _clean_goal_title(part)
+
+        if len(title) >= 3:
+            goals.append(title[:255])
+
+    return goals
+
+
 def _extract_done_task_title(text: str) -> str | None:
     cleaned = text.lower().strip(" .,!?:;")
 
@@ -189,7 +234,6 @@ def _extract_done_task_title(text: str) -> str | None:
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?:;")
 
     return cleaned or None
-
 
 
 def _clean_summary_title(value: str) -> str:
@@ -297,7 +341,6 @@ def _extract_summary_titles(text: str) -> tuple[list[str], list[str]]:
     return done_titles, skipped_titles
 
 
-
 def _detect_intent(text: str) -> str:
     lowered = text.lower().strip()
 
@@ -312,6 +355,23 @@ def _detect_intent(text: str) -> str:
 
     if lowered.startswith("/done"):
         return "mark_done"
+
+    if any(phrase in lowered for phrase in [
+        "покажи цели",
+        "мои цели",
+        "список целей",
+        "что по целям",
+    ]):
+        return "show_goals"
+
+    if any(phrase in lowered for phrase in [
+        "моя цель",
+        "мои цели",
+        "цель:",
+        "цели:",
+        "долгосрочная цель",
+    ]):
+        return "update_goals"
 
     if any(phrase in lowered for phrase in [
         "мой профиль",
@@ -332,6 +392,27 @@ def _detect_intent(text: str) -> str:
         "сон в",
     ]):
         return "update_profile"
+
+    if any(phrase in lowered for phrase in [
+        "итог дня",
+        "итоги дня",
+        "отчет дня",
+        "отчёт дня",
+        "подведи итог",
+        "что сделал за день",
+    ]):
+        return "daily_summary"
+
+    if "," in lowered and any(word in lowered for word in [
+        "сделал",
+        "сделала",
+        "выполнил",
+        "выполнила",
+        "не сделал",
+        "не успел",
+        "готово",
+    ]):
+        return "daily_summary"
 
     if any(phrase in lowered for phrase in [
         "покажи план",
@@ -365,27 +446,6 @@ def _detect_intent(text: str) -> str:
         "очистить всё",
     ]):
         return "clear_tasks"
-
-    if any(phrase in lowered for phrase in [
-        "итог дня",
-        "итоги дня",
-        "отчет дня",
-        "отчёт дня",
-        "подведи итог",
-        "что сделал за день",
-    ]):
-        return "daily_summary"
-
-    if "," in lowered and any(word in lowered for word in [
-        "сделал",
-        "сделала",
-        "выполнил",
-        "выполнила",
-        "не сделал",
-        "не успел",
-        "готово",
-    ]):
-        return "daily_summary"
 
     if any(word in lowered for word in [
         "сделал",
@@ -462,6 +522,7 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
     intent = _detect_intent(text)
 
     tasks: list[ParsedTask] = []
+    goals: list[str] = []
 
     if intent == "add_tasks":
         tasks = _fallback_extract_tasks(text)
@@ -474,6 +535,9 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
                     estimated_minutes=60,
                 )
             )
+
+    if intent == "update_goals":
+        goals = _extract_goals(text)
 
     done_task_titles, skipped_task_titles = (
         _extract_summary_titles(text)
@@ -492,6 +556,7 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
         done_task_title=_extract_done_task_title(text) if intent == "mark_done" else None,
         done_task_titles=done_task_titles,
         skipped_task_titles=skipped_task_titles,
+        goals=goals,
         tasks=tasks,
         raw_text=text,
     )

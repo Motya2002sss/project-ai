@@ -8,6 +8,11 @@ from aiogram.types import Message
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.llm.parser import parse_user_message
+from app.services.goal_service import (
+    create_goals_from_titles,
+    format_goals,
+    list_active_goals,
+)
 from app.services.planning_service import format_day_plan, rebuild_day_plan, rebuild_today_plan
 from app.services.task_service import (
     clear_user_tasks,
@@ -163,6 +168,39 @@ async def handle_text_message(message: Message) -> None:
             telegram_id=telegram_user.id,
             name=telegram_user.full_name,
         )
+
+        if parsed_message.intent == "show_goals":
+            goals = list_active_goals(db=db, user=user)
+            goals_text = format_goals(goals)
+
+            await message.answer(
+                "Твои цели:\n\n"
+                f"{goals_text}"
+            )
+            return
+
+        if parsed_message.intent == "update_goals":
+            goals = create_goals_from_titles(
+                db=db,
+                user=user,
+                titles=parsed_message.goals,
+            )
+
+            goals_text = format_goals(list_active_goals(db=db, user=user))
+
+            if goals:
+                await message.answer(
+                    "Запомнил цели:\n\n"
+                    + "\n".join(f"— {goal.title}" for goal in goals)
+                    + "\n\nТекущий список целей:\n\n"
+                    + goals_text
+                )
+            else:
+                await message.answer(
+                    "Не нашел новых целей или они уже были добавлены.\n\n"
+                    f"Текущий список целей:\n\n{goals_text}"
+                )
+            return
 
         if parsed_message.intent == "show_profile":
             profile_text = format_user_profile(user)
