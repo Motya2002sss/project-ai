@@ -191,6 +191,113 @@ def _extract_done_task_title(text: str) -> str | None:
     return cleaned or None
 
 
+
+def _clean_summary_title(value: str) -> str:
+    cleaned = value.lower().strip(" .,!?:;")
+
+    words_to_remove = [
+        "итог",
+        "итоги",
+        "дня",
+        "за",
+        "сегодня",
+        "я",
+        "уже",
+        "задачу",
+        "сделал",
+        "сделала",
+        "сделано",
+        "выполнил",
+        "выполнила",
+        "готово",
+        "закрыл",
+        "закрыла",
+        "купил",
+        "купила",
+        "сходил",
+        "сходила",
+        "прочитал",
+        "прочитала",
+        "не сделал",
+        "не сделала",
+        "не успел",
+        "не успела",
+        "не выполнил",
+        "не выполнила",
+        "пропустил",
+        "пропустила",
+    ]
+
+    for phrase in sorted(words_to_remove, key=len, reverse=True):
+        cleaned = re.sub(rf"\b{re.escape(phrase)}\b", " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = cleaned.replace(":", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?:;")
+
+    return cleaned
+
+
+def _extract_summary_titles(text: str) -> tuple[list[str], list[str]]:
+    done_titles: list[str] = []
+    skipped_titles: list[str] = []
+
+    chunks = re.split(r"[,;\n]", text)
+
+    for chunk in chunks:
+        chunk = chunk.strip()
+
+        if not chunk:
+            continue
+
+        lowered = chunk.lower()
+
+        is_skipped = any(
+            phrase in lowered
+            for phrase in [
+                "не сделал",
+                "не сделала",
+                "не успел",
+                "не успела",
+                "не выполнил",
+                "не выполнила",
+                "пропустил",
+                "пропустила",
+            ]
+        )
+
+        is_done = any(
+            phrase in lowered
+            for phrase in [
+                "сделал",
+                "сделала",
+                "выполнил",
+                "выполнила",
+                "готово",
+                "закрыл",
+                "закрыла",
+                "купил",
+                "купила",
+                "сходил",
+                "сходила",
+                "прочитал",
+                "прочитала",
+            ]
+        )
+
+        title = _clean_summary_title(chunk)
+
+        if not title:
+            continue
+
+        if is_skipped:
+            skipped_titles.append(title)
+        elif is_done:
+            done_titles.append(title)
+
+    return done_titles, skipped_titles
+
+
+
 def _detect_intent(text: str) -> str:
     lowered = text.lower().strip()
 
@@ -258,6 +365,27 @@ def _detect_intent(text: str) -> str:
         "очистить всё",
     ]):
         return "clear_tasks"
+
+    if any(phrase in lowered for phrase in [
+        "итог дня",
+        "итоги дня",
+        "отчет дня",
+        "отчёт дня",
+        "подведи итог",
+        "что сделал за день",
+    ]):
+        return "daily_summary"
+
+    if "," in lowered and any(word in lowered for word in [
+        "сделал",
+        "сделала",
+        "выполнил",
+        "выполнила",
+        "не сделал",
+        "не успел",
+        "готово",
+    ]):
+        return "daily_summary"
 
     if any(word in lowered for word in [
         "сделал",
@@ -347,6 +475,12 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
                 )
             )
 
+    done_task_titles, skipped_task_titles = (
+        _extract_summary_titles(text)
+        if intent == "daily_summary"
+        else ([], [])
+    )
+
     return ParsedUserMessage(
         intent=intent,
         date=_extract_date(text),
@@ -356,6 +490,8 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
         budget_limit=_extract_budget(text),
         energy_level=_extract_energy(text),
         done_task_title=_extract_done_task_title(text) if intent == "mark_done" else None,
+        done_task_titles=done_task_titles,
+        skipped_task_titles=skipped_task_titles,
         tasks=tasks,
         raw_text=text,
     )

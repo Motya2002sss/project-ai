@@ -18,6 +18,9 @@ class ParsedUserMessage(BaseModel):
     energy_level: str | None = None
 
     done_task_title: str | None = None
+    done_task_titles: list[str] = Field(default_factory=list)
+    skipped_task_titles: list[str] = Field(default_factory=list)
+
     tasks: list[ParsedTask] = Field(default_factory=list)
 
     raw_text: str | None = None

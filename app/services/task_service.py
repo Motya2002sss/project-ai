@@ -61,6 +61,39 @@ def list_active_tasks(db: Session, user: User) -> list[Task]:
     )
 
 
+def _find_active_task_by_title(db: Session, user: User, title: str) -> Task | None:
+    title_lower = title.lower().strip()
+
+    if not title_lower:
+        return None
+
+    tasks = list_active_tasks(db=db, user=user)
+
+    for task in tasks:
+        task_title_lower = task.title.lower().strip()
+
+        if title_lower in task_title_lower or task_title_lower in title_lower:
+            return task
+
+    return None
+
+
+def find_active_tasks_by_titles(
+    db: Session,
+    user: User,
+    titles: list[str],
+) -> list[Task]:
+    found: list[Task] = []
+
+    for title in titles:
+        task = _find_active_task_by_title(db=db, user=user, title=title)
+
+        if task and task not in found:
+            found.append(task)
+
+    return found
+
+
 def mark_task_done(db: Session, user: User, task_id: int) -> Task | None:
     task = (
         db.query(Task)
@@ -86,20 +119,40 @@ def mark_task_done_by_title(
     user: User,
     title: str,
 ) -> Task | None:
-    title_lower = title.lower().strip()
+    task = _find_active_task_by_title(db=db, user=user, title=title)
 
-    tasks = list_active_tasks(db=db, user=user)
+    if task is None:
+        return None
 
-    for task in tasks:
-        task_title_lower = task.title.lower().strip()
+    task.status = "done"
+    db.commit()
+    db.refresh(task)
 
-        if title_lower in task_title_lower or task_title_lower in title_lower:
-            task.status = "done"
-            db.commit()
-            db.refresh(task)
-            return task
+    return task
 
-    return None
+
+def mark_tasks_done_by_titles(
+    db: Session,
+    user: User,
+    titles: list[str],
+) -> list[Task]:
+    done_tasks: list[Task] = []
+
+    for title in titles:
+        task = _find_active_task_by_title(db=db, user=user, title=title)
+
+        if task is None:
+            continue
+
+        task.status = "done"
+        done_tasks.append(task)
+
+    db.commit()
+
+    for task in done_tasks:
+        db.refresh(task)
+
+    return done_tasks
 
 
 def clear_user_tasks(db: Session, user: User) -> int:

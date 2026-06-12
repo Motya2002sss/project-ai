@@ -12,10 +12,12 @@ from app.services.planning_service import format_day_plan, rebuild_today_plan
 from app.services.task_service import (
     clear_user_tasks,
     create_tasks_from_parsed_message,
+    find_active_tasks_by_titles,
     format_tasks,
     list_active_tasks,
     mark_task_done,
     mark_task_done_by_title,
+    mark_tasks_done_by_titles,
 )
 from app.services.user_service import (
     format_user_profile,
@@ -202,6 +204,33 @@ async def handle_text_message(message: Message) -> None:
             rebuild_today_plan(db=db, user=user)
 
             await message.answer(f"Очистил задачи: {count}.\n\nПлан дня очищен.")
+            return
+
+        if parsed_message.intent == "daily_summary":
+            done_tasks = mark_tasks_done_by_titles(
+                db=db,
+                user=user,
+                titles=parsed_message.done_task_titles,
+            )
+
+            skipped_tasks = find_active_tasks_by_titles(
+                db=db,
+                user=user,
+                titles=parsed_message.skipped_task_titles,
+            )
+
+            day_plan = rebuild_today_plan(db=db, user=user)
+            plan_text = format_day_plan(day_plan)
+
+            done_text = "\n".join(f"— {task.title}" for task in done_tasks) or "ничего не отметил"
+            skipped_text = "\n".join(f"— {task.title}" for task in skipped_tasks) or "нет"
+
+            await message.answer(
+                "Итог дня принял.\n\n"
+                f"Выполнено:\n{done_text}\n\n"
+                f"Осталось активным:\n{skipped_text}\n\n"
+                f"Обновленный план:\n\n{plan_text}"
+            )
             return
 
         if parsed_message.intent == "mark_done":
