@@ -48,13 +48,12 @@ async def start_command(message: Message) -> None:
         "Я помогаю планировать день без ручного заполнения ежедневника.\n\n"
         f"Твой внутренний ID: {user.id}\n\n"
         "Можешь писать обычным текстом:\n"
-        "- Мой график с 9 до 18, хочу спать в 23:30\n"
-        "- Покажи профиль\n"
-        "- Хочу зал и подготовиться к собесу\n"
-        "- Покажи план\n"
-        "- Зал сделал\n"
-        "- Я задержался до 20\n"
-        "- Очисти задачи"
+        "— Мой график с 9 до 18, хочу спать в 23:30\n"
+        "— Хочу зал и подготовиться к собесу\n"
+        "— Покажи план\n"
+        "— Зал сделал\n"
+        "— Я задержался до 20\n"
+        "— Очисти задачи"
     )
 
 
@@ -119,8 +118,8 @@ async def done_command(message: Message) -> None:
         plan_text = format_day_plan(day_plan)
 
     await message.answer(
-        f"Готово. Задача выполнена:\n\n{task.title}\n\n"
-        f"Обновленный план дня:\n\n{plan_text}"
+        f"Готово. Отметил выполненной:\n\n{task.title}\n\n"
+        f"Обновленный план:\n\n{plan_text}"
     )
 
 
@@ -165,11 +164,7 @@ async def handle_text_message(message: Message) -> None:
 
         if parsed_message.intent == "show_profile":
             profile_text = format_user_profile(user)
-
-            await message.answer(
-                "Твой профиль:\n\n"
-                f"{profile_text}"
-            )
+            await message.answer(f"Твой профиль:\n\n{profile_text}")
             return
 
         if parsed_message.intent == "update_profile":
@@ -184,7 +179,7 @@ async def handle_text_message(message: Message) -> None:
             await message.answer(
                 "Запомнил настройки профиля:\n\n"
                 f"{profile_text}\n\n"
-                "Теперь при планировании буду учитывать этот график."
+                "Теперь буду учитывать это при планировании."
             )
             return
 
@@ -266,24 +261,17 @@ async def handle_text_message(message: Message) -> None:
 
     if tasks:
         task_lines = "\n".join(
-            f"{task.id}. {task.title} — {task.priority}, {task.estimated_minutes or 60} мин"
+            f"— {task.title}"
             for task in tasks
         )
     else:
         task_lines = "Новых задач нет."
 
     await message.answer(
-        "Я разобрал сообщение:\n\n"
-        f"Intent: {parsed_message.intent}\n"
-        f"Дата: {parsed_message.date or 'не указана'}\n"
-        f"Работа до: {parsed_message.work_until or 'не указано'}\n"
-        f"Бюджет: {parsed_message.budget_limit or 'не указан'}\n"
-        f"Энергия: {parsed_message.energy_level or 'не указана'}\n\n"
-        "Сохранил задачи:\n\n"
+        "Принял. Добавил задачи:\n\n"
         f"{task_lines}\n\n"
-        "Черновой план дня:\n\n"
-        f"{plan_text}\n\n"
-        f"LLM mode: {settings.llm_provider}"
+        "План дня:\n\n"
+        f"{plan_text}"
     )
 
 
