@@ -1,0 +1,113 @@
+from sqlalchemy.orm import Session
+
+from app.llm.parser import parse_user_message
+from app.llm.schemas import ParsedUserMessage
+from app.models.task import Task
+from app.models.user import User
+
+
+def create_tasks_from_parsed_message(
+    db: Session,
+    user: User,
+    parsed_message: ParsedUserMessage,
+) -> list[Task]:
+    tasks: list[Task] = []
+
+    for parsed_task in parsed_message.tasks:
+        task = Task(
+            user_id=user.id,
+            title=parsed_task.title,
+            priority=parsed_task.priority,
+            estimated_minutes=parsed_task.estimated_minutes,
+            status="planned",
+        )
+
+        db.add(task)
+        tasks.append(task)
+
+    db.commit()
+
+    for task in tasks:
+        db.refresh(task)
+
+    return tasks
+
+
+def create_tasks_from_text(
+    db: Session,
+    user: User,
+    text: str,
+) -> tuple[list[Task], ParsedUserMessage]:
+    parsed_message = parse_user_message(text)
+
+    tasks = create_tasks_from_parsed_message(
+        db=db,
+        user=user,
+        parsed_message=parsed_message,
+    )
+
+    return tasks, parsed_message
+
+
+def list_active_tasks(db: Session, user: User) -> list[Task]:
+    return (
+        db.query(Task)
+        .filter(
+            Task.user_id == user.id,
+            Task.status == "planned",
+        )
+        .order_by(Task.id.asc())
+        .all()
+    )
+
+
+def mark_task_done(db: Session, user: User, task_id: int) -> Task | None:
+    task = (
+        db.query(Task)
+        .filter(
+            Task.id == task_id,
+            Task.user_id == user.id,
+        )
+        .one_or_none()
+    )
+
+    if task is None:
+        return None
+
+    task.status = "done"
+    db.commit()
+    db.refresh(task)
+
+    return task
+
+
+def clear_user_tasks(db: Session, user: User) -> int:
+    tasks = (
+        db.query(Task)
+        .filter(Task.user_id == user.id)
+        .all()
+    )
+
+    count = len(tasks)
+
+    for task in tasks:
+        db.delete(task)
+
+    db.commit()
+
+    return count
+
+
+def format_tasks(tasks: list[Task]) -> str:
+    if not tasks:
+        return "Активных задач пока нет."
+
+    lines = []
+
+    for task in tasks:
+        minutes = task.estimated_minutes or 60
+        lines.append(
+            f"{task.id}. {task.title} — {task.priority}, {minutes} мин"
+        )
+
+    return "\n".join(lines)

@@ -6,11 +6,21 @@ class Settings(BaseSettings):
     app_env: str = "local"
     app_debug: bool = True
 
-    database_url: str = "postgresql+psycopg://ai_life_planner:ai_life_planner_password@localhost:5432/ai_life_planner"
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "ai_life_planner"
+    postgres_user: str = "ai_life_planner"
+    postgres_password: str = "ai_life_planner_password"
+
+    database_url: str = (
+        "postgresql+psycopg://ai_life_planner:"
+        "ai_life_planner_password@localhost:5432/ai_life_planner"
+    )
 
     telegram_bot_token: str | None = None
 
-    llm_provider: str | None = None
+    llm_provider: str = "mock"
+    llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
 
