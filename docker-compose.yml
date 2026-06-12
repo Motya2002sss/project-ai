@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-life-planner-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_life_planner
+      POSTGRES_USER: ai_life_planner
+      POSTGRES_PASSWORD: ai_life_planner_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - ai_life_planner_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_life_planner -d ai_life_planner"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ai_life_planner_postgres_data:
