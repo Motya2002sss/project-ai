@@ -38,13 +38,17 @@ def _parse_hhmm(value: str | None) -> time | None:
         return None
 
 
-def _start_time_from_parsed(parsed_message: ParsedUserMessage | None) -> time:
+def _start_time_from_parsed(user: User, parsed_message: ParsedUserMessage | None) -> time:
     if parsed_message and parsed_message.work_until:
         work_until = _parse_hhmm(parsed_message.work_until)
 
         if work_until:
             start_dt = datetime.combine(date.today(), work_until) + timedelta(minutes=30)
             return start_dt.time()
+
+    if user.work_end_time:
+        start_dt = datetime.combine(date.today(), user.work_end_time) + timedelta(minutes=30)
+        return start_dt.time()
 
     return time(hour=18, minute=30)
 
@@ -103,7 +107,7 @@ def rebuild_today_plan(
         .all()
     )
 
-    start_time = _start_time_from_parsed(parsed_message)
+    start_time = _start_time_from_parsed(user, parsed_message)
     current_dt = datetime.combine(date.today(), start_time)
 
     for task in planned_tasks:

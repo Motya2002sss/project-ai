@@ -81,6 +81,27 @@ def mark_task_done(db: Session, user: User, task_id: int) -> Task | None:
     return task
 
 
+def mark_task_done_by_title(
+    db: Session,
+    user: User,
+    title: str,
+) -> Task | None:
+    title_lower = title.lower().strip()
+
+    tasks = list_active_tasks(db=db, user=user)
+
+    for task in tasks:
+        task_title_lower = task.title.lower().strip()
+
+        if title_lower in task_title_lower or task_title_lower in title_lower:
+            task.status = "done"
+            db.commit()
+            db.refresh(task)
+            return task
+
+    return None
+
+
 def clear_user_tasks(db: Session, user: User) -> int:
     tasks = (
         db.query(Task)

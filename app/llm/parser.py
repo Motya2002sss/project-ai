@@ -14,6 +14,7 @@ SKIP_PATTERNS = [
     "работа до",
     "работаю с",
     "работа с",
+    "график",
     "бюджет",
     "потратить",
     "потрачу",
@@ -21,6 +22,15 @@ SKIP_PATTERNS = [
     "₽",
     "свободен",
     "освобожусь",
+    "задержался",
+    "задержусь",
+    "сил мало",
+    "мало сил",
+    "нет сил",
+    "устал",
+    "энергия",
+    "спать",
+    "сон",
 ]
 
 
@@ -35,6 +45,13 @@ def _clean_task_title(text: str) -> str:
     )
 
     return text.strip(" \n\t.,;:-")
+
+
+def _normalize_time(hour: int, minute: int = 0) -> str | None:
+    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+        return None
+
+    return f"{hour:02d}:{minute:02d}"
 
 
 def _estimate_minutes(title: str) -> int:
@@ -55,7 +72,7 @@ def _estimate_minutes(title: str) -> int:
 def _priority(title: str) -> str:
     lowered = title.lower()
 
-    if "собес" in lowered or "карьер" in lowered or "учеб" in lowered:
+    if "собес" in lowered or "карьер" in lowered or "учеб" in lowered or "подготов" in lowered:
         return "high"
 
     return "medium"
@@ -73,9 +90,9 @@ def _extract_budget(text: str) -> int | None:
     return int(match.group(1))
 
 
-def _extract_work_until(text: str) -> str | None:
+def _extract_work_start(text: str) -> str | None:
     match = re.search(
-        r"(?:работаю|работа|свободен|освобожусь)[^\d]*(\d{1,2})(?::(\d{2}))?",
+        r"(?:работаю|работа|график)[^\d]*(?:с|от)\s*(\d{1,2})(?::(\d{2}))?",
         text,
         re.IGNORECASE,
     )
@@ -83,19 +100,49 @@ def _extract_work_until(text: str) -> str | None:
     if not match:
         return None
 
-    hour = int(match.group(1))
-    minute = int(match.group(2) or 0)
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
 
-    if hour < 0 or hour > 23 or minute < 0 or minute > 59:
+
+def _extract_work_until(text: str) -> str | None:
+    # Сначала кейс "с 9 до 18"
+    match = re.search(
+        r"(?:работаю|работа|график)[^\d]*(?:с|от)\s*\d{1,2}(?::\d{2})?\s*(?:до|-)\s*(\d{1,2})(?::(\d{2}))?",
+        text,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+    match = re.search(
+        r"(?:работаю|работа|свободен|освобожусь|задержался|задержусь)[^\d]*(\d{1,2})(?::(\d{2}))?",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
         return None
 
-    return f"{hour:02d}:{minute:02d}"
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+
+def _extract_sleep_time(text: str) -> str | None:
+    match = re.search(
+        r"(?:спать|сон|лечь|ложиться)[^\d]*(\d{1,2})(?::(\d{2}))?",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
 
 
 def _extract_energy(text: str) -> str | None:
     lowered = text.lower()
 
-    if any(word in lowered for word in ["устал", "мало сил", "нет сил", "разбит", "сонный"]):
+    if any(word in lowered for word in ["устал", "мало сил", "сил мало", "нет сил", "разбит", "сонный"]):
         return "low"
 
     if any(word in lowered for word in ["много сил", "заряжен", "энергии много"]):
@@ -116,7 +163,122 @@ def _extract_date(text: str) -> str | None:
     return None
 
 
-def _fallback_parse(text: str) -> ParsedUserMessage:
+def _extract_done_task_title(text: str) -> str | None:
+    cleaned = text.lower().strip(" .,!?:;")
+
+    words_to_remove = [
+        "я",
+        "уже",
+        "сегодня",
+        "задачу",
+        "сделал",
+        "сделала",
+        "сделано",
+        "выполнил",
+        "выполнила",
+        "готово",
+        "закрыл",
+        "закрыла",
+        "отметь",
+        "как",
+    ]
+
+    for word in words_to_remove:
+        cleaned = re.sub(rf"\b{word}\b", " ", cleaned, flags=re.IGNORECASE)
+
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,!?:;")
+
+    return cleaned or None
+
+
+def _detect_intent(text: str) -> str:
+    lowered = text.lower().strip()
+
+    if lowered.startswith("/plan"):
+        return "show_plan"
+
+    if lowered.startswith("/tasks"):
+        return "show_tasks"
+
+    if lowered.startswith("/clear"):
+        return "clear_tasks"
+
+    if lowered.startswith("/done"):
+        return "mark_done"
+
+    if any(phrase in lowered for phrase in [
+        "мой профиль",
+        "покажи профиль",
+        "что ты обо мне знаешь",
+    ]):
+        return "show_profile"
+
+    if any(phrase in lowered for phrase in [
+        "мой график",
+        "обычно работаю",
+        "работаю с",
+        "работа с",
+        "график с",
+        "хочу спать",
+        "ложиться в",
+        "спать в",
+        "сон в",
+    ]):
+        return "update_profile"
+
+    if any(phrase in lowered for phrase in [
+        "покажи план",
+        "что по плану",
+        "расписание",
+        "мой план",
+        "какой план",
+        "план на день",
+    ]):
+        return "show_plan"
+
+    if any(phrase in lowered for phrase in [
+        "покажи задачи",
+        "список задач",
+        "мои задачи",
+        "что по задачам",
+        "какие задачи",
+    ]):
+        return "show_tasks"
+
+    if any(phrase in lowered for phrase in [
+        "очисти задачи",
+        "очистить задачи",
+        "почисти задачи",
+        "удали задачи",
+        "удалить задачи",
+        "удали все задачи",
+        "сбрось задачи",
+        "сбросить задачи",
+        "очисти всё",
+        "очистить всё",
+    ]):
+        return "clear_tasks"
+
+    if any(word in lowered for word in [
+        "сделал",
+        "сделала",
+        "сделано",
+        "выполнил",
+        "выполнила",
+        "готово",
+        "закрыл",
+        "закрыла",
+    ]):
+        return "mark_done"
+
+    if any(word in lowered for word in ["задержался", "задержусь", "освобожусь", "работаю до"]):
+        if not any(word in lowered for word in ["хочу", "надо", "нужно", "планирую"]):
+            return "reschedule"
+
+    return "add_tasks"
+
+
+def _fallback_extract_tasks(text: str) -> list[ParsedTask]:
     normalized_text = text.replace("\n", ",")
     raw_parts = re.split(r"[,;]", normalized_text)
 
@@ -129,6 +291,9 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
             continue
 
         lowered = part.lower()
+
+        if lowered.startswith("/"):
+            continue
 
         if any(pattern in lowered for pattern in SKIP_PATTERNS):
             continue
@@ -148,6 +313,9 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
 
             lowered_title = title.lower()
 
+            if lowered_title.startswith("/"):
+                continue
+
             if any(pattern in lowered_title for pattern in SKIP_PATTERNS):
                 continue
 
@@ -159,20 +327,35 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
                 )
             )
 
-    if not tasks:
-        tasks.append(
-            ParsedTask(
-                title=text.strip()[:255],
-                priority="medium",
-                estimated_minutes=60,
+    return tasks
+
+
+def _fallback_parse(text: str) -> ParsedUserMessage:
+    intent = _detect_intent(text)
+
+    tasks: list[ParsedTask] = []
+
+    if intent == "add_tasks":
+        tasks = _fallback_extract_tasks(text)
+
+        if not tasks:
+            tasks.append(
+                ParsedTask(
+                    title=text.strip()[:255],
+                    priority="medium",
+                    estimated_minutes=60,
+                )
             )
-        )
 
     return ParsedUserMessage(
+        intent=intent,
         date=_extract_date(text),
+        work_start=_extract_work_start(text),
         work_until=_extract_work_until(text),
+        sleep_time=_extract_sleep_time(text),
         budget_limit=_extract_budget(text),
         energy_level=_extract_energy(text),
+        done_task_title=_extract_done_task_title(text) if intent == "mark_done" else None,
         tasks=tasks,
         raw_text=text,
     )
@@ -194,14 +377,8 @@ def _parse_with_llm(text: str) -> ParsedUserMessage:
         temperature=0,
         response_format={"type": "json_object"},
         messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": text,
-            },
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text},
         ],
     )
 

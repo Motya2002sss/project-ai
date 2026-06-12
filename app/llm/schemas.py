@@ -8,9 +8,16 @@ class ParsedTask(BaseModel):
 
 
 class ParsedUserMessage(BaseModel):
+    intent: str = "add_tasks"
+
     date: str | None = None
+    work_start: str | None = None
     work_until: str | None = None
+    sleep_time: str | None = None
     budget_limit: int | None = None
     energy_level: str | None = None
+
+    done_task_title: str | None = None
     tasks: list[ParsedTask] = Field(default_factory=list)
+
     raw_text: str | None = None
