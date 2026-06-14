@@ -69,7 +69,7 @@ def format_goals(goals: list[Goal]) -> str:
     lines = []
 
     for goal in goals:
-        lines.append(f"{goal.id}. {goal.title} — {goal.priority}")
+        lines.append(f"{goal.id}. {goal.title}")
 
     return "\n".join(lines)
 
@@ -80,39 +80,69 @@ def suggest_tasks_from_goals(goals: list[Goal]) -> list[ParsedTask]:
     for goal in goals:
         title = goal.title.lower()
 
-        if any(word in title for word in ["жим", "120", "зал", "масса", "трен"]):
+        if any(word in title for word in ["деньги", "финанс", "накоп", "сбереж", "долг", "бюджет"]):
             suggestions.append(
                 ParsedTask(
-                    title="Тренировка: жим/зал по программе",
-                    priority="high",
-                    estimated_minutes=60,
-                )
-            )
-            continue
-
-        if "англий" in title:
-            suggestions.append(
-                ParsedTask(
-                    title="Английский 30–45 минут",
+                    title=f"Сделать один финансовый шаг по цели: {goal.title}",
                     priority="high",
                     estimated_minutes=45,
                 )
             )
             continue
 
-        if any(word in title for word in ["ai", "planner", "планер", "проект", "бот", "продукт"]):
+        if any(word in title for word in ["уч", "язык", "курс", "экзам", "книг", "математ", "англий"]):
             suggestions.append(
                 ParsedTask(
-                    title="Сделать один конкретный шаг по AI Life Planner",
+                    title=f"Позаниматься 30-45 минут по цели: {goal.title}",
                     priority="high",
-                    estimated_minutes=90,
+                    estimated_minutes=45,
+                )
+            )
+            continue
+
+        if any(word in title for word in ["здоров", "спорт", "трен", "зал", "жим", "бег", "сон"]):
+            suggestions.append(
+                ParsedTask(
+                    title=f"Сделать короткий шаг для здоровья/спорта: {goal.title}",
+                    priority="high",
+                    estimated_minutes=45,
+                )
+            )
+            continue
+
+        if any(word in title for word in ["сем", "родител", "дет", "отношен", "друз"]):
+            suggestions.append(
+                ParsedTask(
+                    title=f"Сделать один шаг для отношений: {goal.title}",
+                    priority="medium",
+                    estimated_minutes=30,
+                )
+            )
+            continue
+
+        if any(word in title for word in ["рис", "музык", "твор", "пис", "фото", "дизайн"]):
+            suggestions.append(
+                ParsedTask(
+                    title=f"Выделить время на творческий шаг: {goal.title}",
+                    priority="medium",
+                    estimated_minutes=45,
+                )
+            )
+            continue
+
+        if any(word in title for word in ["проект", "прилож", "продукт", "стартап", "карьер", "работ"]):
+            suggestions.append(
+                ParsedTask(
+                    title=f"Сделать один конкретный шаг по проекту/карьере: {goal.title}",
+                    priority="high",
+                    estimated_minutes=60,
                 )
             )
             continue
 
         suggestions.append(
             ParsedTask(
-                title=f"Сделать маленький шаг по цели: {goal.title}",
+                title=f"Сделать следующий маленький шаг по цели: {goal.title}",
                 priority="medium",
                 estimated_minutes=45,
             )

@@ -27,9 +27,9 @@ SYSTEM_PROMPT = """
 {
   "intent": "add_tasks",
   "date": "today",
-  "work_until": "18:00",
-  "work_start": "09:00",
-  "sleep_time": "23:30",
+  "work_until": "19:00",
+  "work_start": "10:00",
+  "sleep_time": "00:30",
   "budget_limit": 1500,
   "energy_level": "low",
   "done_task_title": null,
@@ -38,7 +38,7 @@ SYSTEM_PROMPT = """
   "goals": [],
   "tasks": [
     {
-      "title": "зал",
+      "title": "разобрать документы",
       "priority": "medium",
       "estimated_minutes": 60
     }
@@ -52,15 +52,15 @@ SYSTEM_PROMPT = """
 - если пользователь пишет "моя цель", "мои цели:", "цель:" и перечисляет цели — intent update_goals и заполни goals;
 - если пользователь пишет "что сделать для целей", "задачи по целям" — intent suggest_goal_tasks;
 - если пользователь пишет "мой профиль", "покажи профиль" — intent show_profile;
-- если пользователь пишет "мой график с 9 до 18", "хочу спать в 23:30" — intent update_profile;
+- если пользователь пишет "мой график с 10 до 19", "хочу спать в 00:30" — intent update_profile;
 - если пользователь пишет "очисти задачи", "удали все задачи" — intent clear_tasks;
-- если пользователь пишет "сделал зал", "зал сделал", "готово зал", "выполнил подготовку" — intent mark_done и заполни done_task_title;
-- если пользователь пишет "итог дня: зал сделал, английский не сделал" — intent daily_summary, заполни done_task_titles и skipped_task_titles;
+- если пользователь пишет "сделал документы", "документы сделал", "готово задание", "выполнил подготовку" — intent mark_done и заполни done_task_title;
+- если пользователь пишет "итог дня: документы сделал, математику не сделал" — intent daily_summary, заполни done_task_titles и skipped_task_titles;
 - если пользователь пишет "задержался до 20", "освобожусь в 21", "работаю до 19" без новых задач — intent reschedule;
 - если пользователь пишет "завтра" — date tomorrow;
 - если пользователь пишет "сегодня" — date today;
 - если задача связана с собеседованием, учебой или карьерой — priority high;
-- если задача про зал/тренировку — estimated_minutes 60;
+- если задача про спорт или тренировку — estimated_minutes 60;
 - если задача про подготовку к собеседованию — estimated_minutes 90;
 - если задача про магазин/продукты — estimated_minutes 30;
 - если пользователь пишет "мало сил", "устал", "нет сил" — energy_level low;

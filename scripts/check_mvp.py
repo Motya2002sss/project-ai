@@ -42,6 +42,9 @@ def main() -> None:
         assert parsed.intent == expected_intent, (text, parsed.intent, expected_intent)
         assert parsed.date == expected_date, (text, parsed.date, expected_date)
 
+        if parsed.intent == "update_goals":
+            assert parsed.budget_limit is None, (text, parsed.budget_limit)
+
     print("mvp check ok")
 
 

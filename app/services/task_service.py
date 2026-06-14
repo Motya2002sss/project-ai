@@ -253,8 +253,9 @@ def format_tasks(tasks: list[Task]) -> str:
     for task in tasks:
         minutes = task.estimated_minutes or 60
         task_date = _format_task_target_date(task.target_date)
+        priority = _format_task_priority(task.priority)
         lines.append(
-            f"{task.id}. {task.title} — {task_date}, {task.priority}, {minutes} мин"
+            f"{task.id}. {task.title} — {task_date}, {priority}, {minutes} мин"
         )
 
     return "\n".join(lines)
@@ -270,3 +271,13 @@ def _format_task_target_date(target_date: date) -> str:
         return "завтра"
 
     return target_date.strftime("%d.%m.%Y")
+
+
+def _format_task_priority(priority: str) -> str:
+    priority_map = {
+        "high": "важная",
+        "medium": "обычная",
+        "low": "низкий приоритет",
+    }
+
+    return priority_map.get(priority, priority)

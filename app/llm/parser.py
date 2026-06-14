@@ -535,6 +535,7 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
 
     tasks: list[ParsedTask] = []
     goals: list[str] = []
+    budget_limit = None if intent == "update_goals" else _extract_budget(text)
 
     if intent == "add_tasks":
         tasks = _fallback_extract_tasks(text)
@@ -563,7 +564,7 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
         work_start=_extract_work_start(text),
         work_until=_extract_work_until(text),
         sleep_time=_extract_sleep_time(text),
-        budget_limit=_extract_budget(text),
+        budget_limit=budget_limit,
         energy_level=_extract_energy(text),
         done_task_title=_extract_done_task_title(text) if intent == "mark_done" else None,
         done_task_titles=done_task_titles,

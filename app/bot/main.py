@@ -37,6 +37,27 @@ logging.basicConfig(level=logging.INFO)
 dp = Dispatcher()
 
 
+def _planning_context_hint(user) -> str:
+    if user.work_end_time and user.sleep_time:
+        return ""
+
+    missing = []
+
+    if not user.work_end_time:
+        missing.append("рабочее время")
+
+    if not user.sleep_time:
+        missing.append("время сна")
+
+    missing_text = " и ".join(missing)
+
+    return (
+        f"\n\nПлан построен с настройками по умолчанию. "
+        f"Чтобы точнее учитывать {missing_text}, напиши обычным текстом: "
+        "«Мой график с 10 до 19, хочу спать в 00:30»."
+    )
+
+
 @dp.message(CommandStart())
 async def start_command(message: Message) -> None:
     telegram_user = message.from_user
@@ -54,17 +75,16 @@ async def start_command(message: Message) -> None:
 
     await message.answer(
         "Привет! Я AI Life Planner.\n\n"
-        "Я помогаю планировать день без ручного заполнения ежедневника.\n\n"
-        f"Твой внутренний ID: {user.id}\n\n"
+        "Я помогаю превращать обычный текст в цели, задачи и реалистичный план дня.\n\n"
         "Можешь писать обычным текстом:\n"
-        "— Мой график с 9 до 18, хочу спать в 23:30\n"
-        "— Моя цель: пожать 120 кг, выучить английский, сделать AI planner\n"
+        "— Мой график с 10 до 19, хочу спать в 00:30\n"
+        "— Моя цель: накопить резерв, научиться рисовать, сделать мобильное приложение\n"
         "— Что сделать для целей?\n"
-        "— Хочу зал и подготовиться к собесу\n"
-        "— Завтра хочу английский\n"
+        "— Сегодня хочу разобрать документы\n"
+        "— Завтра хочу позаниматься математикой\n"
         "— Покажи план\n"
-        "— Зал сделал\n"
-        "— Итог дня: зал сделал, английский не сделал\n"
+        "— Документы сделал\n"
+        "— Итог дня: документы сделал, математику не сделал\n"
         "— Я задержался до 20\n"
         "— Очисти задачи"
     )
@@ -98,8 +118,9 @@ async def plan_command(message: Message) -> None:
         user = get_or_create_user(db=db, telegram_id=telegram_user.id, name=telegram_user.full_name)
         day_plan = rebuild_today_plan(db=db, user=user)
         plan_text = format_day_plan(day_plan)
+        hint = _planning_context_hint(user)
 
-    await message.answer(f"Текущий план дня:\n\n{plan_text}")
+    await message.answer(f"Текущий план дня:\n\n{plan_text}{hint}")
 
 
 @dp.message(Command("done"))
@@ -129,10 +150,11 @@ async def done_command(message: Message) -> None:
 
         day_plan = rebuild_today_plan(db=db, user=user)
         plan_text = format_day_plan(day_plan)
+        hint = _planning_context_hint(user)
 
     await message.answer(
         f"Готово. Отметил выполненной:\n\n{task.title}\n\n"
-        f"Обновленный план:\n\n{plan_text}"
+        f"Обновленный план:\n\n{plan_text}{hint}"
     )
 
 
@@ -214,7 +236,8 @@ async def handle_text_message(message: Message) -> None:
             if not goals:
                 await message.answer(
                     "Пока нет активных целей.\n\n"
-                    "Напиши, например: «Моя цель: выучить английский, сделать AI planner»."
+                    "Напиши обычным текстом, к чему хочешь прийти. Например: "
+                    "«Моя цель: накопить резерв, научиться рисовать, улучшить здоровье»."
                 )
                 return
 
@@ -232,6 +255,7 @@ async def handle_text_message(message: Message) -> None:
                 parsed_message=parsed_message,
             )
             plan_text = format_day_plan(day_plan)
+            hint = _planning_context_hint(user)
 
             if tasks:
                 task_lines = "\n".join(f"— {task.title}" for task in tasks)
@@ -241,7 +265,7 @@ async def handle_text_message(message: Message) -> None:
 
             await message.answer(
                 f"{prefix}\n\n"
-                f"План дня:\n\n{plan_text}"
+                f"План дня:\n\n{plan_text}{hint}"
             )
             return
 
@@ -273,8 +297,9 @@ async def handle_text_message(message: Message) -> None:
                 parsed_message=parsed_message,
             )
             plan_text = format_day_plan(day_plan)
+            hint = _planning_context_hint(user)
 
-            await message.answer(f"Текущий план дня:\n\n{plan_text}")
+            await message.answer(f"Текущий план дня:\n\n{plan_text}{hint}")
             return
 
         if parsed_message.intent == "show_tasks":
@@ -309,6 +334,7 @@ async def handle_text_message(message: Message) -> None:
 
             day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
             plan_text = format_day_plan(day_plan)
+            hint = _planning_context_hint(user)
 
             done_text = "\n".join(f"— {task.title}" for task in done_tasks) or "ничего не отметил"
             skipped_text = "\n".join(f"— {task.title}" for task in skipped_tasks) or "нет"
@@ -317,7 +343,7 @@ async def handle_text_message(message: Message) -> None:
                 "Итог дня принял.\n\n"
                 f"Выполнено:\n{done_text}\n\n"
                 f"Осталось активным:\n{skipped_text}\n\n"
-                f"Обновленный план:\n\n{plan_text}"
+                f"Обновленный план:\n\n{plan_text}{hint}"
             )
             return
 
@@ -343,10 +369,11 @@ async def handle_text_message(message: Message) -> None:
 
             day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
             plan_text = format_day_plan(day_plan)
+            hint = _planning_context_hint(user)
 
             await message.answer(
                 f"Отметил выполненной:\n\n{task.title}\n\n"
-                f"Обновленный план:\n\n{plan_text}"
+                f"Обновленный план:\n\n{plan_text}{hint}"
             )
             return
 
@@ -357,10 +384,11 @@ async def handle_text_message(message: Message) -> None:
                 parsed_message=parsed_message,
             )
             plan_text = format_day_plan(day_plan)
+            hint = _planning_context_hint(user)
 
             await message.answer(
                 "Ок, перепланировал день с учетом изменений:\n\n"
-                f"{plan_text}"
+                f"{plan_text}{hint}"
             )
             return
 
@@ -377,6 +405,7 @@ async def handle_text_message(message: Message) -> None:
         )
 
         plan_text = format_day_plan(day_plan)
+        hint = _planning_context_hint(user)
 
     if tasks:
         task_lines = "\n".join(
@@ -390,7 +419,7 @@ async def handle_text_message(message: Message) -> None:
         "Принял. Добавил задачи:\n\n"
         f"{task_lines}\n\n"
         "План дня:\n\n"
-        f"{plan_text}"
+        f"{plan_text}{hint}"
     )
 
 
