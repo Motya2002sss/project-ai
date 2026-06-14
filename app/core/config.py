@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
 
+    plan_start_buffer_minutes: int = 30
+    default_plan_start_time: str = "18:30"
+
     llm_provider: str = "mock"
     llm_base_url: str | None = None
     llm_api_key: str | None = None

@@ -45,7 +45,7 @@ def _clean_task_title(text: str) -> str:
     text = text.strip(" \n\t.,;:-")
 
     text = re.sub(
-        r"^(сегодня|завтра|послезавтра)?\s*(надо|нужно|хочу|планирую|должен|должна|сделать)\s+",
+        r"^(но\s+)?(сегодня|завтра|послезавтра)?\s*(надо|нужно|хочу|планирую|должен|должна|сделать)\s+",
         "",
         text,
         flags=re.IGNORECASE,
@@ -355,6 +355,18 @@ def _detect_intent(text: str) -> str:
 
     if lowered.startswith("/done"):
         return "mark_done"
+
+    if (
+        re.search(r"что\s+(?:сегодня|завтра)?\s*сделать\s+(?:для|по)\s+цел", lowered)
+        or any(phrase in lowered for phrase in [
+            "задачи для целей",
+            "задачи по целям",
+            "что делать для целей",
+            "что делать по целям",
+            "как продвинуться по целям",
+        ])
+    ):
+        return "suggest_goal_tasks"
 
     if any(phrase in lowered for phrase in [
         "покажи цели",

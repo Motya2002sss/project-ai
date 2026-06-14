@@ -2,6 +2,7 @@ from datetime import date, datetime, time, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.llm.schemas import ParsedUserMessage
 from app.models.day_plan import DayPlan
 from app.models.plan_item import PlanItem
@@ -65,16 +66,19 @@ def _parse_hhmm(value: str | None) -> time | None:
 
 
 def _start_time_from_parsed(user: User, parsed_message: ParsedUserMessage | None, plan_date: date) -> datetime:
+    buffer = timedelta(minutes=settings.plan_start_buffer_minutes)
+
     if parsed_message and parsed_message.work_until:
         work_until = _parse_hhmm(parsed_message.work_until)
 
         if work_until:
-            return datetime.combine(plan_date, work_until) + timedelta(minutes=30)
+            return datetime.combine(plan_date, work_until) + buffer
 
     if user.work_end_time:
-        return datetime.combine(plan_date, user.work_end_time) + timedelta(minutes=30)
+        return datetime.combine(plan_date, user.work_end_time) + buffer
 
-    return datetime.combine(plan_date, time(hour=18, minute=30))
+    default_start = _parse_hhmm(settings.default_plan_start_time) or time(hour=18, minute=30)
+    return datetime.combine(plan_date, default_start)
 
 
 def _get_sleep_deadline(user: User, current_dt: datetime) -> datetime | None:
@@ -133,8 +137,8 @@ def rebuild_day_plan(
         day_plan.budget_limit = parsed_message.budget_limit or day_plan.budget_limit
         day_plan.summary = parsed_message.raw_text or "Автоматический план дня"
 
-    for item in list(day_plan.items):
-        db.delete(item)
+    day_plan.items.clear()
+    db.flush()
 
     planned_tasks = (
         db.query(Task)
@@ -178,7 +182,6 @@ def rebuild_day_plan(
             has_overload = True
 
             plan_item = PlanItem(
-                day_plan_id=day_plan.id,
                 task_id=task.id,
                 start_time=None,
                 end_time=None,
@@ -187,11 +190,10 @@ def rebuild_day_plan(
                 status="not_scheduled",
             )
 
-            db.add(plan_item)
+            day_plan.items.append(plan_item)
             continue
 
         plan_item = PlanItem(
-            day_plan_id=day_plan.id,
             task_id=task.id,
             start_time=current_dt.time(),
             end_time=end_dt.time(),
@@ -200,7 +202,7 @@ def rebuild_day_plan(
             status="planned",
         )
 
-        db.add(plan_item)
+        day_plan.items.append(plan_item)
         current_dt = end_dt
 
     day_plan.status = "overloaded" if has_overload else "draft"

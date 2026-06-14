@@ -25,16 +25,33 @@ def create_tasks_from_parsed_tasks(
     target_date = _get_task_target_date(parsed_message)
 
     for parsed_task in parsed_tasks:
+        title = parsed_task.title.strip()
+
+        if not title:
+            continue
+
+        exists = (
+            db.query(Task)
+            .filter(
+                Task.user_id == user.id,
+                Task.target_date == target_date,
+                Task.title.ilike(title),
+                Task.status == "planned",
+            )
+            .one_or_none()
+        )
+
+        if exists:
+            continue
+
         task_data = {
             "user_id": user.id,
-            "title": parsed_task.title,
+            "title": title[:255],
             "priority": parsed_task.priority,
             "estimated_minutes": parsed_task.estimated_minutes,
+            "target_date": target_date,
             "status": "planned",
         }
-
-        if hasattr(Task, "target_date"):
-            task_data["target_date"] = target_date
 
         task = Task(**task_data)
 
@@ -78,25 +95,33 @@ def create_tasks_from_text(
     return tasks, parsed_message
 
 
-def list_active_tasks(db: Session, user: User) -> list[Task]:
-    return (
+def list_active_tasks(db: Session, user: User, target_date: date | None = None) -> list[Task]:
+    query = (
         db.query(Task)
         .filter(
             Task.user_id == user.id,
             Task.status == "planned",
         )
-        .order_by(Task.id.asc())
-        .all()
     )
 
+    if target_date is not None:
+        query = query.filter(Task.target_date == target_date)
 
-def _find_active_task_by_title(db: Session, user: User, title: str) -> Task | None:
+    return query.order_by(Task.target_date.asc(), Task.id.asc()).all()
+
+
+def _find_active_task_by_title(
+    db: Session,
+    user: User,
+    title: str,
+    target_date: date | None = None,
+) -> Task | None:
     title_lower = title.lower().strip()
 
     if not title_lower:
         return None
 
-    tasks = list_active_tasks(db=db, user=user)
+    tasks = list_active_tasks(db=db, user=user, target_date=target_date)
 
     for task in tasks:
         task_title_lower = task.title.lower().strip()
@@ -111,11 +136,17 @@ def find_active_tasks_by_titles(
     db: Session,
     user: User,
     titles: list[str],
+    target_date: date | None = None,
 ) -> list[Task]:
     found: list[Task] = []
 
     for title in titles:
-        task = _find_active_task_by_title(db=db, user=user, title=title)
+        task = _find_active_task_by_title(
+            db=db,
+            user=user,
+            title=title,
+            target_date=target_date,
+        )
 
         if task and task not in found:
             found.append(task)
@@ -147,8 +178,14 @@ def mark_task_done_by_title(
     db: Session,
     user: User,
     title: str,
+    target_date: date | None = None,
 ) -> Task | None:
-    task = _find_active_task_by_title(db=db, user=user, title=title)
+    task = _find_active_task_by_title(
+        db=db,
+        user=user,
+        title=title,
+        target_date=target_date,
+    )
 
     if task is None:
         return None
@@ -164,11 +201,17 @@ def mark_tasks_done_by_titles(
     db: Session,
     user: User,
     titles: list[str],
+    target_date: date | None = None,
 ) -> list[Task]:
     done_tasks: list[Task] = []
 
     for title in titles:
-        task = _find_active_task_by_title(db=db, user=user, title=title)
+        task = _find_active_task_by_title(
+            db=db,
+            user=user,
+            title=title,
+            target_date=target_date,
+        )
 
         if task is None:
             continue
@@ -209,8 +252,21 @@ def format_tasks(tasks: list[Task]) -> str:
 
     for task in tasks:
         minutes = task.estimated_minutes or 60
+        task_date = _format_task_target_date(task.target_date)
         lines.append(
-            f"{task.id}. {task.title} — {task.priority}, {minutes} мин"
+            f"{task.id}. {task.title} — {task_date}, {task.priority}, {minutes} мин"
         )
 
     return "\n".join(lines)
+
+
+def _format_task_target_date(target_date: date) -> str:
+    today = date.today()
+
+    if target_date == today:
+        return "сегодня"
+
+    if target_date == today + timedelta(days=1):
+        return "завтра"
+
+    return target_date.strftime("%d.%m.%Y")

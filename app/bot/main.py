@@ -12,11 +12,13 @@ from app.services.goal_service import (
     create_goals_from_titles,
     format_goals,
     list_active_goals,
+    suggest_tasks_from_goals,
 )
-from app.services.planning_service import format_day_plan, rebuild_day_plan, rebuild_today_plan
+from app.services.planning_service import format_day_plan, get_plan_date, rebuild_day_plan, rebuild_today_plan
 from app.services.task_service import (
     clear_user_tasks,
     create_tasks_from_parsed_message,
+    create_tasks_from_parsed_tasks,
     find_active_tasks_by_titles,
     format_tasks,
     list_active_tasks,
@@ -56,9 +58,13 @@ async def start_command(message: Message) -> None:
         f"Твой внутренний ID: {user.id}\n\n"
         "Можешь писать обычным текстом:\n"
         "— Мой график с 9 до 18, хочу спать в 23:30\n"
+        "— Моя цель: пожать 120 кг, выучить английский, сделать AI planner\n"
+        "— Что сделать для целей?\n"
         "— Хочу зал и подготовиться к собесу\n"
+        "— Завтра хочу английский\n"
         "— Покажи план\n"
         "— Зал сделал\n"
+        "— Итог дня: зал сделал, английский не сделал\n"
         "— Я задержался до 20\n"
         "— Очисти задачи"
     )
@@ -202,6 +208,43 @@ async def handle_text_message(message: Message) -> None:
                 )
             return
 
+        if parsed_message.intent == "suggest_goal_tasks":
+            goals = list_active_goals(db=db, user=user)
+
+            if not goals:
+                await message.answer(
+                    "Пока нет активных целей.\n\n"
+                    "Напиши, например: «Моя цель: выучить английский, сделать AI planner»."
+                )
+                return
+
+            suggested_tasks = suggest_tasks_from_goals(goals)
+            tasks = create_tasks_from_parsed_tasks(
+                db=db,
+                user=user,
+                parsed_tasks=suggested_tasks,
+                parsed_message=parsed_message,
+            )
+
+            day_plan = rebuild_day_plan(
+                db=db,
+                user=user,
+                parsed_message=parsed_message,
+            )
+            plan_text = format_day_plan(day_plan)
+
+            if tasks:
+                task_lines = "\n".join(f"— {task.title}" for task in tasks)
+                prefix = f"Добавил задачи по целям:\n\n{task_lines}"
+            else:
+                prefix = "Задачи по целям уже есть в активном плане."
+
+            await message.answer(
+                f"{prefix}\n\n"
+                f"План дня:\n\n{plan_text}"
+            )
+            return
+
         if parsed_message.intent == "show_profile":
             profile_text = format_user_profile(user)
             await message.answer(f"Твой профиль:\n\n{profile_text}")
@@ -249,19 +292,22 @@ async def handle_text_message(message: Message) -> None:
             return
 
         if parsed_message.intent == "daily_summary":
+            summary_date = get_plan_date(parsed_message)
             done_tasks = mark_tasks_done_by_titles(
                 db=db,
                 user=user,
                 titles=parsed_message.done_task_titles,
+                target_date=summary_date,
             )
 
             skipped_tasks = find_active_tasks_by_titles(
                 db=db,
                 user=user,
                 titles=parsed_message.skipped_task_titles,
+                target_date=summary_date,
             )
 
-            day_plan = rebuild_today_plan(db=db, user=user)
+            day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
             plan_text = format_day_plan(day_plan)
 
             done_text = "\n".join(f"— {task.title}" for task in done_tasks) or "ничего не отметил"
@@ -280,10 +326,12 @@ async def handle_text_message(message: Message) -> None:
                 await message.answer("Не понял, какую задачу отметить выполненной.")
                 return
 
+            task_date = get_plan_date(parsed_message)
             task = mark_task_done_by_title(
                 db=db,
                 user=user,
                 title=parsed_message.done_task_title,
+                target_date=task_date,
             )
 
             if task is None:
@@ -293,7 +341,7 @@ async def handle_text_message(message: Message) -> None:
                 )
                 return
 
-            day_plan = rebuild_today_plan(db=db, user=user)
+            day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
             plan_text = format_day_plan(day_plan)
 
             await message.answer(
@@ -303,7 +351,7 @@ async def handle_text_message(message: Message) -> None:
             return
 
         if parsed_message.intent == "reschedule":
-            day_plan = rebuild_today_plan(
+            day_plan = rebuild_day_plan(
                 db=db,
                 user=user,
                 parsed_message=parsed_message,
