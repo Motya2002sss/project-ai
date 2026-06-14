@@ -1,69 +1,51 @@
 # AI Life Planner
 
-AI Life Planner is a Telegram-first AI life planner MVP. It is not just a todo list and not just a command bot.
+AI Life Planner is a Telegram-first MVP for an AI life planner.
 
-The user writes normal human text, and the system turns it into:
+It is not a plain todo list and not a command-only Telegram bot. The core idea is that a user writes normal human text, and the backend turns it into durable profile data, long-term goals, dated tasks, a realistic plan for the day, and end-of-day progress.
 
-- a remembered user profile;
-- long-term goals;
-- dated tasks for today or tomorrow;
-- a realistic day plan;
-- task completion updates;
-- end-of-day summaries.
+The current product direction is:
 
-The current MVP uses a mock parser with deterministic fallback heuristics. A real LLM parser is planned later, but the backend already owns persistence, validation, task state, and planning rules.
+- parser or future LLM extracts structure from natural language;
+- backend validates, stores, schedules, and controls task state;
+- important state is stored in PostgreSQL, not only in chat history.
 
-## What Works Now
+## Current MVP Status
 
-- FastAPI app with `/health`.
-- PostgreSQL through Docker Compose.
-- SQLAlchemy models:
-  - `User`
-  - `Goal`
-  - `Task`
-  - `DayPlan`
-  - `PlanItem`
-- Alembic migrations.
-- Telegram bot through aiogram.
-- Natural-language mock parser.
-- User profile storage:
-  - name;
-  - timezone;
-  - work start/end;
-  - sleep time.
-- Goals:
-  - create from natural language;
-  - list active goals;
-  - suggest small tasks from goals.
-- Tasks:
-  - create from natural language;
-  - attach to `target_date`;
-  - list active tasks;
-  - mark done;
-  - clear tasks.
-- Planning:
-  - today/tomorrow separation;
-  - priority ordering;
-  - estimated duration;
-  - work schedule;
-  - configurable buffer after work;
-  - sleep deadline;
-  - low-energy adjustment;
-  - overflow tasks marked as not scheduled.
-- Daily summary:
-  - completed tasks are marked done;
-  - skipped tasks remain active;
-  - plan is rebuilt.
-- Smoke check script: `scripts/check_mvp.py`.
+The MVP already works as a Telegram-based planner with a FastAPI backend foundation.
 
-## Not Ready Yet
+Implemented:
 
-- Real LLM integration is not production-ready yet. The mock parser remains the default.
-- Web UI is not implemented yet.
-- Production auth for future Web API is not implemented yet.
-- Production deployment is not prepared yet.
-- Full FastAPI product API for Web UI is not implemented yet.
-- FastAPI currently exposes only `/health`; product flows are available through the Telegram bot and shared services.
+- FastAPI app with `/health`;
+- PostgreSQL via Docker Compose;
+- SQLAlchemy models;
+- Alembic migrations;
+- Telegram bot via aiogram;
+- mock natural-language parser;
+- user profile storage;
+- goals;
+- tasks;
+- `Task.target_date`;
+- today/tomorrow task separation;
+- goal-based task suggestions;
+- work/sleep-aware planning;
+- configurable buffer after work;
+- task priority and estimated duration handling;
+- overflow tasks marked as not scheduled;
+- mark task done;
+- daily summary;
+- smoke-check script at `scripts/check_mvp.py`;
+- product, UAT, and security docs in `docs/`.
+
+Not ready yet:
+
+- real LLM parser for production use;
+- Web UI;
+- production authentication;
+- production deployment;
+- full FastAPI product API for Web UI.
+
+FastAPI currently exposes `/health`. The main MVP user flow is in the Telegram bot and shared service layer.
 
 ## Project Structure
 
@@ -71,7 +53,7 @@ The current MVP uses a mock parser with deterministic fallback heuristics. A rea
 ai-life-planner/
 ├── app/
 │   ├── api/              # FastAPI routers
-│   ├── bot/              # Telegram bot entrypoint
+│   ├── bot/              # Telegram bot
 │   ├── core/             # settings
 │   ├── db/               # SQLAlchemy engine/session/base
 │   ├── llm/              # mock parser, prompts, parser schemas
@@ -87,29 +69,37 @@ ai-life-planner/
 ├── tests/
 ├── docker-compose.yml
 ├── requirements.txt
+├── .env.example
+├── AGENTS.md
 └── README.md
 ```
 
-## Environment Variables
+## Environment
 
-Create `.env` from `.env.example`:
+Create local env file:
 
 ```bash
 cp .env.example .env
 ```
 
-On Windows CMD:
+Windows CMD:
 
 ```cmd
 copy .env.example .env
 ```
 
-Required/local variables:
+Important variables:
 
 ```text
 APP_NAME=AI Life Planner
 APP_ENV=local
 APP_DEBUG=true
+
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=ai_life_planner
+POSTGRES_USER=ai_life_planner
+POSTGRES_PASSWORD=<local-password>
 
 DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/<database>
 
@@ -124,19 +114,19 @@ LLM_API_KEY=
 LLM_MODEL=
 ```
 
-For Telegram bot usage, set `TELEGRAM_BOT_TOKEN` in `.env`.
+For local Telegram usage, set `TELEGRAM_BOT_TOKEN` in `.env`.
 
-Do not commit `.env` or real secrets. See [docs/SECURITY_BASELINE.md](docs/SECURITY_BASELINE.md).
+Do not commit `.env`, real tokens, real API keys, cookies, or private credentials. See [docs/SECURITY_BASELINE.md](docs/SECURITY_BASELINE.md).
 
 ## Local Setup
 
-### 1. Create And Activate Venv
+### 1. Create And Activate Virtual Environment
 
 ```bash
 python -m venv .venv
 ```
 
-Windows PowerShell:
+PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -166,19 +156,19 @@ pip install -r requirements.txt
 docker compose up -d postgres
 ```
 
-Check container status:
+Check:
 
 ```bash
 docker compose ps
 ```
 
-### 4. Apply Alembic Migrations
+### 4. Apply Migrations
 
 ```bash
 alembic upgrade head
 ```
 
-This creates the core tables and ensures `tasks.target_date` exists for today/tomorrow planning.
+This creates and updates the database schema, including `tasks.target_date` for today/tomorrow planning.
 
 ### 5. Run FastAPI
 
@@ -203,13 +193,13 @@ Expected response:
 
 ### 6. Run Telegram Bot
 
-Make sure `TELEGRAM_BOT_TOKEN` is set in `.env`, then run:
+Set `TELEGRAM_BOT_TOKEN` in `.env`, then run:
 
 ```bash
 python -m app.bot.main
 ```
 
-The bot supports natural-language messages such as:
+Example natural-language messages:
 
 ```text
 Мой график с 10 до 19, хочу спать в 00:30
@@ -222,7 +212,7 @@ The bot supports natural-language messages such as:
 Я задержался до 20
 ```
 
-Slash commands also exist for quick checks:
+Useful bot commands:
 
 ```text
 /start
@@ -234,7 +224,7 @@ Slash commands also exist for quick checks:
 
 ## Smoke Checks
 
-Run:
+Run the MVP smoke-check:
 
 ```bash
 python scripts/check_mvp.py
@@ -246,7 +236,7 @@ Expected:
 mvp check ok
 ```
 
-Bot/FastAPI import check:
+Import check:
 
 ```bash
 python - <<'PY'
@@ -256,23 +246,33 @@ print("bot and app import ok")
 PY
 ```
 
-Run tests:
+Tests:
 
 ```bash
 pytest
 ```
 
-## Product Docs
+## Documentation
 
 - [Product spec](docs/PRODUCT_SPEC.md)
-- [Manual UAT scenarios](docs/UAT_SCENARIOS.md)
 - [Security baseline](docs/SECURITY_BASELINE.md)
+- [Manual UAT scenarios](docs/UAT_SCENARIOS.md)
+- [Codex/project instructions](AGENTS.md)
+
+## Security Rules
+
+- Never commit `.env`.
+- Never commit Telegram tokens, LLM keys, database passwords, cookies, or session tokens.
+- Keep `.env.example` safe and placeholder-only.
+- Do not log secrets or full database URLs with passwords.
+- User-owned data must be filtered by user context.
+- Schema changes must go through Alembic.
+- Do not delete Docker volumes or user data as a shortcut.
 
 ## Development Principles
 
-- LLM/parser extracts structure; backend controls state and planning.
-- Important state must be stored in PostgreSQL, not in chat history.
-- User-owned data must be filtered by `user_id`.
-- Schema changes go through Alembic.
-- Do not commit secrets.
-- Keep Telegram bot and future Web UI on the same service layer.
+- Telegram bot and future API should stay thin.
+- Business logic belongs in `app/services/`.
+- Parser or LLM extracts structure; backend validates and stores.
+- Keep the MVP universal; do not hardcode it around one user's schedule, tasks, or goals.
+- Keep the mock parser as fallback when real LLM support is added.
