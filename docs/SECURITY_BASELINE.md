@@ -106,11 +106,12 @@ Current MVP rule:
 
 ## LLM Safety
 
-When a real LLM parser is enabled:
+When an LLM parser is enabled:
 
 - the LLM returns structured JSON only;
 - JSON is validated through Pydantic;
 - invalid or unsafe output falls back to the mock parser;
+- LLM requests must use a bounded timeout and must not block the bot indefinitely;
 - the LLM does not execute commands;
 - the LLM is not the source of truth for database writes;
 - secrets, `.env`, tokens, credentials, and internal config must not be sent to the LLM;

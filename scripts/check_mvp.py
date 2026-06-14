@@ -5,6 +5,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
 from app.bot.main import dp
+from app.core.config import settings
 from app.llm.parser import parse_user_message
 from app.main import app
 from app.models.task import Task
@@ -17,6 +18,9 @@ from app.services.task_service import (
 
 
 def main() -> None:
+    settings.llm_provider = "mock"
+    settings.llm_api_key = None
+
     samples = {
         "Мой график с 10 до 19, хочу спать в 00:30": ("update_profile", None),
         "Моя цель: накопить 500000 рублей, научиться рисовать": ("update_goals", None),

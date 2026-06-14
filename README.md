@@ -6,7 +6,7 @@ The product is not a plain todo list and not a command-only Telegram bot. The us
 
 Core principle:
 
-- parser or future LLM extracts structure from natural language;
+- parser or LLM extracts structure from natural language;
 - backend validates, stores, plans, and controls state;
 - important product state lives in PostgreSQL, not only in chat messages.
 
@@ -22,6 +22,8 @@ Implemented:
 - Alembic migrations;
 - Telegram bot through aiogram;
 - mock natural-language parser;
+- optional OpenAI/openai-compatible LLM parser;
+- automatic fallback to mock parser when LLM is unavailable or invalid;
 - user profile storage;
 - long-term goals;
 - tasks;
@@ -40,7 +42,7 @@ Implemented:
 
 Not ready yet:
 
-- real LLM parser for production-quality natural language understanding;
+- production-quality LLM evaluation and prompt tuning;
 - Web UI;
 - production authentication;
 - production deployment;
@@ -113,11 +115,43 @@ LLM_PROVIDER=mock
 LLM_BASE_URL=
 LLM_API_KEY=
 LLM_MODEL=
+LLM_TIMEOUT_SECONDS=15
 ```
 
 For local Telegram usage, set `TELEGRAM_BOT_TOKEN` in `.env`.
 
 Never commit `.env`, real tokens, real API keys, cookies, passwords, or private credentials. Keep `.env.example` safe and placeholder-only.
+
+## LLM Parser
+
+The default parser is local and deterministic:
+
+```text
+LLM_PROVIDER=mock
+```
+
+To enable OpenAI:
+
+```text
+LLM_PROVIDER=openai
+LLM_API_KEY=<your-local-key>
+LLM_MODEL=gpt-4o-mini
+LLM_TIMEOUT_SECONDS=15
+```
+
+To use an OpenAI-compatible endpoint:
+
+```text
+LLM_PROVIDER=openai-compatible
+LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
+LLM_API_KEY=<your-local-key>
+LLM_MODEL=<model-name>
+LLM_TIMEOUT_SECONDS=15
+```
+
+The LLM must return JSON that validates as `ParsedUserMessage`. If the API key is missing, the provider is `mock`, the request times out, the provider returns invalid JSON, or Pydantic validation fails, the system falls back to the mock parser. Telegram users should receive a normal planner response rather than a technical LLM error.
+
+The LLM only extracts structure. Database writes, task status changes, plan building, and persistence stay in backend services.
 
 ## Local Setup
 

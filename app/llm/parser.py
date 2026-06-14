@@ -2,12 +2,14 @@ import json
 import re
 
 from openai import OpenAI
-from pydantic import ValidationError
 
 from app.core.config import settings
 from app.llm.prompts import SYSTEM_PROMPT
 from app.llm.schemas import ParsedTask, ParsedUserMessage
 
+
+LLM_PROVIDERS = {"openai", "openai-compatible", "custom"}
+DEFAULT_LLM_MODEL = "gpt-4o-mini"
 
 SKIP_PATTERNS = [
     "работаю до",
@@ -577,14 +579,15 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
 
 def _parse_with_llm(text: str) -> ParsedUserMessage:
     if not settings.llm_api_key:
-        raise RuntimeError("LLM_API_KEY is empty")
+        raise RuntimeError("LLM API key is not configured")
 
     client = OpenAI(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url or None,
+        timeout=settings.llm_timeout_seconds,
     )
 
-    model = settings.llm_model or "gpt-4o-mini"
+    model = settings.llm_model or DEFAULT_LLM_MODEL
 
     response = client.chat.completions.create(
         model=model,
@@ -610,10 +613,10 @@ def _parse_with_llm(text: str) -> ParsedUserMessage:
 def parse_user_message(text: str) -> ParsedUserMessage:
     provider = (settings.llm_provider or "mock").lower()
 
-    if provider in {"openai", "custom", "openai-compatible"} and settings.llm_api_key:
+    if provider in LLM_PROVIDERS and settings.llm_api_key:
         try:
             return _parse_with_llm(text)
-        except (RuntimeError, json.JSONDecodeError, ValidationError, Exception):
+        except Exception:
             return _fallback_parse(text)
 
     return _fallback_parse(text)

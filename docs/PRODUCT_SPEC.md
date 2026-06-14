@@ -10,7 +10,7 @@ The product is not a todo list and not a command-only Telegram bot. The user sho
 
 The core value is reducing planning work. The user should not manually maintain dozens of fields, priorities, dates, and schedules. The system should remember stable context, extract useful structure from text, and help the user decide what is realistic today.
 
-The backend owns state and planning rules. The parser or future LLM extracts meaning from text, but it does not become the source of truth.
+The backend owns state and planning rules. The parser or optional LLM extracts meaning from text, but it does not become the source of truth.
 
 ## Core Scenarios
 
@@ -58,6 +58,7 @@ The current MVP supports:
 - User profile storage.
 - Goal storage.
 - Task creation from natural language through the mock parser.
+- Optional OpenAI/openai-compatible parser integration with mock fallback.
 - Task `target_date` for today/tomorrow separation.
 - Goal-task suggestions through backend heuristics.
 - Day planning with work end, sleep, energy, priority, and duration.
@@ -66,7 +67,7 @@ The current MVP supports:
 
 ## Next
 
-1. Add a real LLM parser while keeping the mock parser as fallback.
+1. Improve LLM parsing quality with eval scenarios, stricter prompts, and production monitoring.
 2. Add FastAPI endpoints for profile, goals, tasks, plans, and natural-language messages.
 3. Build a Web UI on top of the same services after backend and Telegram MVP remain stable.
 4. Improve planning quality with better scheduling rules, conflict handling, and goal progress history.

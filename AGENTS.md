@@ -27,6 +27,7 @@ The repository already contains a working MVP foundation:
 - Alembic migrations;
 - Telegram bot through aiogram;
 - mock natural-language parser;
+- optional OpenAI/openai-compatible parser integration with mock fallback;
 - user profile flow;
 - goals flow;
 - tasks flow;
@@ -54,9 +55,9 @@ Treat these pieces as active product code. Preserve the existing MVP flows unles
 
 ## Parser And LLM Rules
 
-The current default parser is the mock parser.
+The default parser is the mock parser. Real LLM parsing can be enabled through `LLM_PROVIDER=openai` or `LLM_PROVIDER=openai-compatible`.
 
-Parser or future LLM responsibilities:
+Parser or LLM responsibilities:
 
 - parse natural-language messages;
 - extract structured tasks, goals, constraints, dates, energy, and user intent;
@@ -71,7 +72,7 @@ Backend responsibilities:
 - check dates and time windows;
 - control task statuses.
 
-When real LLM support is added:
+LLM integration rules:
 
 - keep the mock parser as fallback;
 - ask the LLM for structured JSON only;
