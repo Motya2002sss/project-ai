@@ -61,6 +61,8 @@ The current MVP uses a mock parser with deterministic fallback heuristics. A rea
 - Real LLM integration is not production-ready yet. The mock parser remains the default.
 - Web UI is not implemented yet.
 - Production auth for future Web API is not implemented yet.
+- Production deployment is not prepared yet.
+- Full FastAPI product API for Web UI is not implemented yet.
 - FastAPI currently exposes only `/health`; product flows are available through the Telegram bot and shared services.
 
 ## Project Structure

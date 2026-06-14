@@ -1,79 +1,126 @@
 # AGENTS.md
 
-## Project name
+## Project
 
-AI Life Planner
+AI Life Planner is a commercial-minded AI life planner MVP.
 
-## Project idea
+It is not a simple todo list and not a command-only Telegram bot. The product value is that a user writes normal human text, and the system turns it into durable profile data, long-term goals, dated tasks, a realistic day plan, task completion updates, and end-of-day summaries.
 
-AI Life Planner is an AI-powered daily planner that helps users plan their day without manually filling many fields.
+## Current MVP State
 
-The main problem: people do not want to constantly maintain a planner. They want to write or say plans in natural language, and the system should understand them, extract tasks, constraints, goals, budget, energy level, and build a realistic daily schedule.
+The MVP already includes:
 
-## Core product principle
+- FastAPI app with `/health`;
+- PostgreSQL through Docker Compose;
+- SQLAlchemy models and Alembic migrations;
+- Telegram bot through aiogram;
+- mock natural-language parser;
+- user profile storage;
+- goals;
+- tasks;
+- `Task.target_date` for today/tomorrow separation;
+- goal task suggestions;
+- work/sleep-aware day planning;
+- mark done;
+- daily summary;
+- smoke-check script at `scripts/check_mvp.py`;
+- product, UAT, and security documentation in `docs/`.
 
-The product is not just a todo list.
+Do not treat the project as a skeleton-only repository. Telegram bot, services, models, planning, goals, tasks, and migrations are already part of the MVP.
 
-The product is an AI life planner that reduces manual planning.
+## Product Principles
 
-The user should not manually create dozens of tasks. The user writes natural text, and the system turns it into a structured plan.
+- Reduce manual planning work.
+- Let the user write naturally instead of filling many fields.
+- Store important state in PostgreSQL, not in LLM messages or chat history.
+- Keep the product universal: do not hardcode the app around one user, one schedule, or one set of goals.
+- Examples such as gym, English, AI projects, 9-18, and 23:30 are allowed only as demos, tests, README examples, or fallback heuristics.
+- Telegram is the current primary MVP interface.
+- FastAPI is the foundation for the future Web UI and API.
 
-## Tech stack
+## Architecture Rules
 
-Use:
+- Bot/API layers must stay thin.
+- Business logic belongs in `app/services/`.
+- Persistence belongs in SQLAlchemy models and database migrations.
+- Parser/LLM extracts structured meaning from text.
+- Backend validates, stores, schedules, controls statuses, and decides what is persisted.
+- LLM must not directly execute commands, mutate state, or become the source of truth.
+- If a real LLM is enabled, keep the mock parser as fallback and validate LLM JSON through Pydantic.
+- Keep Telegram bot and future Web UI on the same service layer.
 
-- Python
-- FastAPI
-- PostgreSQL
-- SQLAlchemy
-- Alembic
-- Telegram bot
-- Docker Compose
-- LLM API for natural language understanding
+## Security Baseline
 
-## Important architectural rule
+Follow `docs/SECURITY_BASELINE.md`.
 
-LLM should not control everything.
+Never commit:
 
-Correct approach:
+- `.env` or `.env.*`, except `.env.example`;
+- Telegram tokens;
+- OpenAI/LLM keys;
+- real database passwords;
+- private URLs with credentials;
+- cookies or session tokens;
+- logs containing secrets.
 
-LLM understands and explains.
-Backend calculates and controls.
+Do not log secrets, full database URLs with passwords, raw `.env`, Authorization headers, or cookies.
 
-The LLM is used for:
-- parsing natural language;
-- extracting tasks;
-- extracting constraints;
-- generating user-friendly explanations;
-- suggesting plan changes.
+Before committing, inspect staged files and staged diff. Stop if secrets or local artifacts are staged.
 
-The backend is responsible for:
-- storing data;
-- validating data;
-- creating plans;
-- checking time conflicts;
-- sorting by priority;
-- controlling task statuses;
-- saving results to the database.
+## Database Rules
 
-Do not store important state only inside LLM messages.
+- Schema changes must go through Alembic migrations.
+- Do not delete data without explicit instruction.
+- Do not delete Docker volumes as a shortcut.
+- Do not call `drop_all()` or `create_all()` in runtime app code.
+- Multi-user data must be isolated by user context. User-owned queries must filter by `user_id`.
 
-## First development step
+## Development Constraints
 
-Start with the project skeleton only.
+- Do not rewrite the project from scratch.
+- Do not change the tech stack without a clear reason.
+- Do not add dependencies casually.
+- Do not start Web UI work unless explicitly requested.
+- Do not connect a production LLM unless explicitly requested.
+- Keep changes focused and covered by smoke checks or tests.
+- Preserve existing working flows: profile, goals, tasks, today/tomorrow, planning, daily summary, Telegram UX, FastAPI import, and Alembic migrations.
 
-Create:
-- FastAPI app;
-- `/health` endpoint;
-- PostgreSQL in Docker Compose;
-- SQLAlchemy config;
-- Alembic setup;
-- `.env.example`;
-- `requirements.txt`;
-- basic README.
+## Required Checks
 
-Do not implement Telegram bot yet.
-Do not implement LLM yet.
-Do not implement business logic yet.
+Run before commit:
 
-The first goal is to make the backend start locally.
+```bash
+alembic upgrade head
+python scripts/check_mvp.py
+python - <<'PY'
+from app.bot.main import dp
+from app.main import app
+print("bot and app import ok")
+PY
+git status
+git diff --stat
+git diff --cached --name-only
+git diff --cached
+```
+
+Run tests when available:
+
+```bash
+pytest
+```
+
+If the local Windows shell cannot use the project `.venv` because it was created under WSL, use a temporary local check environment rather than modifying `.venv`.
+
+## Definition Of Done
+
+A change is done only when:
+
+- the requested behavior or documentation update is complete;
+- existing MVP flows are not broken;
+- smoke-check passes;
+- Alembic reaches head;
+- bot/app imports pass;
+- no secrets are staged;
+- documentation is updated when behavior or setup changes;
+- commit is created when requested;
+- push is performed only when `origin` is configured correctly.
