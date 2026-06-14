@@ -14,6 +14,11 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
 dist/
 build/
 *.egg-info/
