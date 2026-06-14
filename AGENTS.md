@@ -4,76 +4,92 @@ This file is the project-level instruction set for Codex and other coding agents
 
 ## Product Meaning
 
-AI Life Planner is a commercial-minded AI life planner MVP.
+AI Life Planner is a Telegram-first MVP for an AI daily and life planner.
 
-It is not a normal todo list and not a command-only Telegram bot. The user writes natural text, and the system turns it into:
+The product is not a normal todo list and not a command-only Telegram bot. The user writes natural text, and the system turns that text into:
 
 - profile data;
 - long-term goals;
 - dated tasks;
-- realistic day plans;
+- realistic daily plans;
 - completion status;
 - daily summaries.
 
-The product should reduce manual planning work. Users should not maintain dozens of fields by hand.
+The main product value is reducing manual planning work. Users should not maintain many fields, dates, priorities, and reschedules by hand.
 
-## Current MVP
+## Current MVP Status
 
-The project already contains:
+The repository already contains a working MVP foundation:
 
 - FastAPI app with `/health`;
-- PostgreSQL via Docker Compose;
+- PostgreSQL through Docker Compose;
 - SQLAlchemy models;
 - Alembic migrations;
-- Telegram bot via aiogram;
+- Telegram bot through aiogram;
 - mock natural-language parser;
 - user profile flow;
 - goals flow;
 - tasks flow;
 - `Task.target_date`;
+- today/tomorrow task separation;
 - today/tomorrow planning;
 - goal task suggestions;
 - work/sleep-aware planning;
-- mark done;
-- daily summary;
+- mark done flow;
+- daily summary flow;
 - smoke-check script at `scripts/check_mvp.py`;
-- product and security docs in `docs/`.
+- product, UAT, and security docs in `docs/`.
 
-Do not treat this repository as an empty starter project. Telegram bot, services, models, tasks, goals, planning, migrations, and smoke checks are already part of the MVP.
+Treat these pieces as active product code. Preserve the existing MVP flows unless the user explicitly asks to change them.
 
 ## Architecture Rules
 
-- Bot and API layers must be thin.
+- Bot and API layers must stay thin.
 - Business logic belongs in `app/services/`.
 - Database state belongs in SQLAlchemy models and PostgreSQL.
 - Schema changes belong in Alembic migrations.
-- Parser or future LLM extracts structured meaning from text.
-- Backend validates input, stores data, builds plans, checks dates, controls statuses, and decides what is persisted.
-- Important state must not live only inside chat history or LLM messages.
 - Telegram bot and future Web API must use the same service layer.
+- Important state must not live only inside chat history or LLM messages.
+- User-owned reads and writes must filter by user context, usually `user_id`.
 
-## LLM Rules
+## Parser And LLM Rules
 
-The current default is the mock parser.
+The current default parser is the mock parser.
+
+Parser or future LLM responsibilities:
+
+- parse natural-language messages;
+- extract structured tasks, goals, constraints, dates, energy, and user intent;
+- generate user-facing explanations when needed.
+
+Backend responsibilities:
+
+- validate parser output;
+- decide what can be stored;
+- create and update database records;
+- build plans;
+- check dates and time windows;
+- control task statuses.
 
 When real LLM support is added:
 
-- keep mock parser as fallback;
+- keep the mock parser as fallback;
 - ask the LLM for structured JSON only;
-- validate JSON through Pydantic;
+- validate JSON through Pydantic or equivalent schemas;
+- treat LLM output as untrusted input;
 - do not let the LLM directly execute commands;
 - do not let the LLM directly mutate database state;
-- do not send secrets, `.env`, tokens, credentials, or internal config to the LLM;
-- treat LLM output as untrusted input that backend services must validate.
+- do not send `.env`, tokens, credentials, private URLs, or internal config to the LLM.
 
 ## Product Universality
 
-Do not hardcode the product around one user.
+Do not hardcode the product around one person.
 
 Allowed:
 
-- examples in README, docs, tests, and mock fallback heuristics;
-- broad fallback heuristics for task duration or goal suggestions.
+- examples in README, docs, tests, and fallback heuristics;
+- broad default assumptions when profile data is missing;
+- generic heuristics for durations, priorities, and goal task suggestions.
 
 Not allowed:
 
@@ -81,6 +97,8 @@ Not allowed:
 - assuming every user sleeps at 23:30;
 - assuming all goals are gym, English, or AI projects;
 - building flows that only work for one user's personal routine.
+
+The planner must work for finance, study, health, family, creativity, career, personal projects, and other user-defined goals.
 
 ## Security Rules
 
@@ -100,14 +118,13 @@ Never commit:
 
 Do not log secrets, raw `.env`, full database URLs with passwords, Authorization headers, cookies, or API keys.
 
-## Database And Multi-User Rules
+## Database Rules
 
-- User-owned queries must filter by user context, usually `user_id`.
-- Telegram users must only access their own profile, goals, tasks, and plans.
+- Use Alembic for schema changes.
+- Do not call `drop_all()` or `create_all()` in runtime application code.
 - Do not delete user data without explicit instruction.
 - Do not delete Docker volumes as a shortcut.
-- Do not run `drop_all()` or `create_all()` in runtime application code.
-- Use Alembic for schema changes.
+- Keep multi-user isolation in mind for Telegram and future Web API flows.
 
 ## Development Constraints
 
@@ -116,13 +133,13 @@ Do not log secrets, raw `.env`, full database URLs with passwords, Authorization
 - Do not add dependencies casually.
 - Do not start Web UI work unless explicitly requested.
 - Do not wire production LLM behavior unless explicitly requested.
-- Keep patches focused.
+- Keep patches focused on the user's request.
+- Do not change code when the user asks for documentation-only work.
 - If parser, tasks, goals, planning, bot UX, or migrations change, update smoke checks or tests.
-- Preserve existing MVP flows: profile, goals, tasks, today/tomorrow, planning, daily summary, Telegram UX, FastAPI import, and Alembic migrations.
 
 ## Required Checks Before Commit
 
-Run:
+Run the relevant checks before committing. For MVP-level changes, run:
 
 ```bash
 alembic upgrade head
@@ -132,10 +149,6 @@ from app.bot.main import dp
 from app.main import app
 print("bot and app import ok")
 PY
-git status
-git diff --stat
-git diff --cached --name-only
-git diff --cached
 ```
 
 Run tests when available:
@@ -144,14 +157,24 @@ Run tests when available:
 pytest
 ```
 
-Before committing, verify staged diff does not contain secrets or local artifacts.
+Before committing, inspect:
+
+```bash
+git status
+git diff --stat
+git diff --cached --name-only
+git diff --cached
+```
+
+Stop before committing if staged changes contain secrets, local artifacts, generated noise, or unrelated edits.
 
 ## Commit And Push Rules
 
 - Commit only after checks pass.
-- Use clear commit messages.
+- Use the commit message requested by the user when one is provided.
 - Push only to the configured intended remote.
 - If `origin` is missing or wrong, stop and ask for the correct URL.
+- After push, verify that the remote branch points to the new commit.
 
 ## Definition Of Done
 
@@ -166,4 +189,5 @@ A task is complete only when:
 - no secrets are staged;
 - docs are updated when behavior or setup changes;
 - commit is created when requested;
-- push is completed when remote is valid.
+- push is completed when remote is valid;
+- remote branch verification confirms the pushed commit.
