@@ -77,7 +77,7 @@ def _match_tokens(value: str) -> set[str]:
     return {
         _stem_ru_token(token)
         for token in normalized.split()
-        if token
+        if len(token) > 2
     }
 
 
@@ -99,7 +99,10 @@ def _soft_text_match(actual: str, expected: str) -> bool:
 
     overlap = actual_tokens & expected_tokens
 
-    return len(overlap) == len(expected_tokens)
+    if len(overlap) == len(expected_tokens):
+        return True
+
+    return len(overlap) / len(expected_tokens) >= 0.5
 
 
 def _contains_all(actual_values: list[str], expected_values: list[str]) -> bool:

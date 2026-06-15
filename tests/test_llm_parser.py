@@ -269,6 +269,154 @@ def test_llm_content_normalizes_null_lists_before_validation():
     assert parsed.skipped_task_titles == []
 
 
+def test_llm_content_normalizes_null_task_priority_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "разобрать документы",
+                        "priority": None,
+                        "estimated_minutes": 30,
+                    }
+                ],
+            }
+        ),
+        text="Сегодня хочу разобрать документы",
+    )
+
+    assert parsed.tasks[0].priority == "medium"
+
+
+def test_llm_content_extracts_json_from_extra_text():
+    parsed = parser._parse_llm_content(
+        'Ответ:\n```json\n{"intent": "show_tasks", "date": "today"}\n```',
+        text="Какие задачи на сегодня?",
+    )
+
+    assert parsed.intent == "show_tasks"
+    assert parsed.date == "today"
+
+
+def test_llm_content_polishes_goal_progress_intent_and_date():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "show_plan",
+                "date": None,
+                "tasks": [],
+            }
+        ),
+        text="Как продвинуться по целям завтра?",
+    )
+
+    assert parsed.intent == "suggest_goal_tasks"
+    assert parsed.date == "tomorrow"
+
+
+def test_llm_content_polishes_mixed_text_date_and_task_priority():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "date": None,
+                "energy_level": None,
+                "tasks": [
+                    {
+                        "title": "подготовиться к экзамену",
+                        "priority": "medium",
+                        "estimated_minutes": 60,
+                    }
+                ],
+            }
+        ),
+        text="Сегодня мало сил, планирую подготовиться к экзамену",
+    )
+
+    assert parsed.date == "today"
+    assert parsed.energy_level == "low"
+    assert parsed.tasks[0].priority == "high"
+
+
+def test_llm_content_removes_hallucinated_date_when_text_has_no_date():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "date": "today",
+                "tasks": [
+                    {
+                        "title": "подготовка к экзамену",
+                        "priority": "high",
+                        "estimated_minutes": 60,
+                    }
+                ],
+            }
+        ),
+        text="Планирую подготовиться к экзамену",
+    )
+
+    assert parsed.date is None
+    assert parsed.tasks[0].priority == "high"
+
+
+def test_llm_content_polishes_missing_daily_summary_skipped_titles():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "daily_summary",
+                "done_task_titles": ["купил продукты"],
+                "skipped_task_titles": [],
+            }
+        ),
+        text="Итоги дня: купил продукты, не успел бюджет",
+    )
+
+    assert "купил продукты" in parsed.done_task_titles
+    assert "бюджет" in parsed.skipped_task_titles
+
+
+def test_llm_content_polishes_reschedule_intent_over_profile():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "update_profile",
+                "work_until": "19",
+            }
+        ),
+        text="Работаю до 19",
+    )
+
+    assert parsed.intent == "reschedule"
+    assert parsed.work_until == "19:00"
+
+
+def test_llm_content_polishes_mixed_profile_text_without_hallucinated_tasks():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "date": None,
+                "energy_level": "low",
+                "tasks": [
+                    {
+                        "title": "выдуманная задача",
+                        "priority": "high",
+                        "estimated_minutes": 60,
+                    }
+                ],
+            }
+        ),
+        text="Я обычно работаю весь день, вечером сил мало. Хочу подтянуть финансы и учебу. Сегодня могу выделить часа два.",
+    )
+
+    assert parsed.intent == "update_profile"
+    assert parsed.date == "today"
+    assert parsed.energy_level == "low"
+    assert parsed.tasks == []
+
+
 def test_parsed_user_message_accepts_valid_llm_shape():
     parsed = ParsedUserMessage.model_validate(
         {

@@ -137,7 +137,18 @@ def _estimate_minutes(title: str) -> int:
 def _priority(title: str) -> str:
     lowered = title.lower()
 
-    if "собес" in lowered or "карьер" in lowered or "учеб" in lowered or "подготов" in lowered:
+    if any(
+        word in lowered
+        for word in [
+            "собес",
+            "карьер",
+            "учеб",
+            "подготов",
+            "экзамен",
+            "дедлайн",
+            "сроч",
+        ]
+    ):
         return "high"
 
     return "medium"
@@ -687,14 +698,80 @@ def _normalize_llm_data(data):
     return normalized
 
 
+def _load_llm_json(content: str):
+    text = content.strip()
+
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+
+        if start != -1 and end > start:
+            return json.loads(text[start : end + 1])
+
+        raise
+
+
 def _parse_llm_content(content: str | None, text: str) -> ParsedUserMessage:
     if not content:
         raise RuntimeError("Empty LLM response")
 
-    data = _normalize_llm_data(json.loads(content))
+    data = _normalize_llm_data(_load_llm_json(content))
     data["raw_text"] = text
 
-    return ParsedUserMessage.model_validate(data)
+    return _polish_llm_parsed_message(ParsedUserMessage.model_validate(data), text)
+
+
+def _merge_titles(existing: list[str], extracted: list[str]) -> list[str]:
+    merged = list(existing)
+    seen = {title.lower().replace("ё", "е") for title in merged}
+
+    for title in extracted:
+        key = title.lower().replace("ё", "е")
+
+        if key not in seen:
+            merged.append(title)
+            seen.add(key)
+
+    return merged
+
+
+def _polish_llm_parsed_message(parsed: ParsedUserMessage, text: str) -> ParsedUserMessage:
+    fallback_intent = _detect_intent(text)
+    text_date = _extract_date(text)
+
+    if fallback_intent == "suggest_goal_tasks":
+        parsed.intent = "suggest_goal_tasks"
+
+    if fallback_intent == "reschedule":
+        parsed.intent = "reschedule"
+
+    if fallback_intent == "update_profile" and parsed.intent == "add_tasks":
+        parsed.intent = "update_profile"
+        parsed.tasks = []
+
+    parsed.date = text_date
+
+    if parsed.energy_level is None:
+        parsed.energy_level = _extract_energy(text)
+
+    parsed.budget_limit = _extract_budget(text)
+
+    if parsed.intent == "daily_summary":
+        done_titles, skipped_titles = _extract_summary_titles(text)
+        parsed.done_task_titles = _merge_titles(parsed.done_task_titles, done_titles)
+        parsed.skipped_task_titles = _merge_titles(parsed.skipped_task_titles, skipped_titles)
+
+    for task in parsed.tasks:
+        if task.priority != "high" and _priority(task.title) == "high":
+            task.priority = "high"
+
+    return parsed
 
 
 def _llm_messages(text: str) -> list[dict[str, str]]:

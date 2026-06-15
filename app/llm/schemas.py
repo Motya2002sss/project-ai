@@ -48,6 +48,11 @@ class ParsedTask(BaseModel):
     def strip_title(cls, value) -> str:
         return str(value).strip()
 
+    @field_validator("priority", mode="before")
+    @classmethod
+    def normalize_priority(cls, value):
+        return _empty_to_none(value) or "medium"
+
     @field_validator("estimated_minutes", mode="before")
     @classmethod
     def normalize_estimated_minutes(cls, value):
