@@ -649,11 +649,49 @@ def _validate_llm_input(text: str) -> None:
         )
 
 
+def _normalize_llm_time(value):
+    if value is None:
+        return None
+
+    if isinstance(value, int):
+        return _normalize_time(value)
+
+    if isinstance(value, str):
+        value = value.strip()
+
+        if re.fullmatch(r"\d{1,2}", value):
+            return _normalize_time(int(value))
+
+        match = re.fullmatch(r"(\d{1,2}):(\d{1,2})", value)
+
+        if match:
+            return _normalize_time(int(match.group(1)), int(match.group(2)))
+
+    return value
+
+
+def _normalize_llm_data(data):
+    if not isinstance(data, dict):
+        return data
+
+    normalized = dict(data)
+
+    for field in ["work_start", "work_until", "sleep_time"]:
+        if field in normalized:
+            normalized[field] = _normalize_llm_time(normalized[field])
+
+    for field in ["tasks", "goals", "done_task_titles", "skipped_task_titles"]:
+        if normalized.get(field) is None:
+            normalized[field] = []
+
+    return normalized
+
+
 def _parse_llm_content(content: str | None, text: str) -> ParsedUserMessage:
     if not content:
         raise RuntimeError("Empty LLM response")
 
-    data = json.loads(content)
+    data = _normalize_llm_data(json.loads(content))
     data["raw_text"] = text
 
     return ParsedUserMessage.model_validate(data)

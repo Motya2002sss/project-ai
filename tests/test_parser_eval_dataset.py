@@ -87,3 +87,10 @@ def test_strict_eval_detects_fallback_as_failure(monkeypatch):
     assert result["failed"] == 1
     assert result["fallback_count"] == 1
     assert result["failures"][0][2] == "fallback"
+
+
+def test_eval_matcher_is_case_punctuation_and_ending_tolerant():
+    assert eval_parser_cases._contains_all(["Документы"], ["документы"])
+    assert eval_parser_cases._contains_all(["подготовка к экзамену"], ["подготовку"])
+    assert eval_parser_cases._contains_all(["итоги: бюджет."], ["бюджет"])
+    assert eval_parser_cases._contains_all(["прочитать черновик"], ["прочитать черновик"])

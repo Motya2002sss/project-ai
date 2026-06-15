@@ -231,6 +231,44 @@ def test_ollama_empty_content_falls_back_in_normal_mode(monkeypatch, caplog):
     assert "Empty LLM response" in caplog.text
 
 
+def test_llm_content_normalizes_short_time_values_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "update_profile",
+                "work_start": "8",
+                "work_until": "20",
+                "sleep_time": "08",
+            }
+        ),
+        text="Мой график с 8 до 20, сон в 08",
+    )
+
+    assert parsed.work_start == "08:00"
+    assert parsed.work_until == "20:00"
+    assert parsed.sleep_time == "08:00"
+
+
+def test_llm_content_normalizes_null_lists_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "show_plan",
+                "tasks": None,
+                "goals": None,
+                "done_task_titles": None,
+                "skipped_task_titles": None,
+            }
+        ),
+        text="Покажи план",
+    )
+
+    assert parsed.tasks == []
+    assert parsed.goals == []
+    assert parsed.done_task_titles == []
+    assert parsed.skipped_task_titles == []
+
+
 def test_parsed_user_message_accepts_valid_llm_shape():
     parsed = ParsedUserMessage.model_validate(
         {

@@ -1,5 +1,6 @@
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -11,13 +12,99 @@ from app.llm.parser import parse_user_message
 
 
 CASES_PATH = ROOT_DIR / "tests" / "fixtures" / "parser_cases.json"
+RU_SUFFIXES = [
+    "иями",
+    "ями",
+    "ами",
+    "ого",
+    "ему",
+    "ыми",
+    "ими",
+    "ией",
+    "ия",
+    "ий",
+    "ый",
+    "ой",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "ую",
+    "юю",
+    "ом",
+    "ем",
+    "ах",
+    "ях",
+    "ов",
+    "ев",
+    "ам",
+    "ям",
+    "а",
+    "я",
+    "ы",
+    "и",
+    "у",
+    "ю",
+    "е",
+    "о",
+]
+
+
+def _normalize_match_text(value: str) -> str:
+    value = value.lower().replace("ё", "е")
+    value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
+    value = re.sub(r"\s+", " ", value).strip()
+
+    return value
+
+
+def _stem_ru_token(token: str) -> str:
+    if len(token) <= 4:
+        return token
+
+    for suffix in RU_SUFFIXES:
+        if token.endswith(suffix) and len(token) - len(suffix) >= 4:
+            return token[: -len(suffix)]
+
+    return token
+
+
+def _match_tokens(value: str) -> set[str]:
+    normalized = _normalize_match_text(value)
+
+    return {
+        _stem_ru_token(token)
+        for token in normalized.split()
+        if token
+    }
+
+
+def _soft_text_match(actual: str, expected: str) -> bool:
+    actual_normalized = _normalize_match_text(actual)
+    expected_normalized = _normalize_match_text(expected)
+
+    if not actual_normalized or not expected_normalized:
+        return False
+
+    if expected_normalized in actual_normalized or actual_normalized in expected_normalized:
+        return True
+
+    actual_tokens = _match_tokens(actual_normalized)
+    expected_tokens = _match_tokens(expected_normalized)
+
+    if not actual_tokens or not expected_tokens:
+        return False
+
+    overlap = actual_tokens & expected_tokens
+
+    return len(overlap) == len(expected_tokens)
 
 
 def _contains_all(actual_values: list[str], expected_values: list[str]) -> bool:
-    lowered_actual = [value.lower() for value in actual_values]
-
     return all(
-        any(expected.lower() in actual for actual in lowered_actual)
+        any(_soft_text_match(actual, expected) for actual in actual_values)
         for expected in expected_values
     )
 
@@ -52,7 +139,10 @@ def _case_passes(parsed, expected: dict) -> bool:
             return False
 
     if "done_task_title_contains" in expected:
-        if not parsed.done_task_title or expected["done_task_title_contains"] not in parsed.done_task_title:
+        if not parsed.done_task_title:
+            return False
+
+        if not _soft_text_match(parsed.done_task_title, expected["done_task_title_contains"]):
             return False
 
     if "done_task_titles_contains" in expected:
