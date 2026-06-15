@@ -2,6 +2,7 @@ import json
 import logging
 import re
 
+import httpx
 from openai import OpenAI
 
 from app.core.config import settings
@@ -9,8 +10,9 @@ from app.llm.prompts import SYSTEM_PROMPT
 from app.llm.schemas import ParsedTask, ParsedUserMessage
 
 
-LLM_PROVIDERS = {"openai", "openai-compatible", "custom"}
+LLM_PROVIDERS = {"openai", "openai-compatible", "custom", "ollama"}
 DEFAULT_LLM_MODEL = "gpt-4o-mini"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 MAX_LOG_MESSAGE_CHARS = 300
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,20 @@ logger = logging.getLogger(__name__)
 
 class LLMInputTooLongError(ValueError):
     pass
+
+
+def _with_parser_metadata(
+    parsed: ParsedUserMessage,
+    *,
+    parser_provider: str,
+    used_fallback: bool = False,
+    fallback_reason: str | None = None,
+) -> ParsedUserMessage:
+    parsed.parser_provider = parser_provider
+    parsed.used_fallback = used_fallback
+    parsed.fallback_reason = fallback_reason
+
+    return parsed
 
 
 def _sanitize_error_message(error: Exception) -> str:
@@ -626,12 +642,31 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
     )
 
 
-def _parse_with_llm(text: str) -> ParsedUserMessage:
+def _validate_llm_input(text: str) -> None:
     if len(text) > settings.llm_max_input_chars:
         raise LLMInputTooLongError(
             f"input length {len(text)} exceeds LLM_MAX_INPUT_CHARS={settings.llm_max_input_chars}"
         )
 
+
+def _parse_llm_content(content: str | None, text: str) -> ParsedUserMessage:
+    if not content:
+        raise RuntimeError("Empty LLM response")
+
+    data = json.loads(content)
+    data["raw_text"] = text
+
+    return ParsedUserMessage.model_validate(data)
+
+
+def _llm_messages(text: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": text},
+    ]
+
+
+def _parse_with_openai_compatible(text: str) -> ParsedUserMessage:
     if not settings.llm_api_key:
         raise RuntimeError("LLM API key is not configured")
 
@@ -648,38 +683,76 @@ def _parse_with_llm(text: str) -> ParsedUserMessage:
         temperature=0,
         max_tokens=settings.llm_max_output_tokens,
         response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": text},
-        ],
+        messages=_llm_messages(text),
     )
 
     content = response.choices[0].message.content
 
-    if not content:
-        raise RuntimeError("Empty LLM response")
+    return _parse_llm_content(content, text)
 
-    data = json.loads(content)
-    data["raw_text"] = text
 
-    return ParsedUserMessage.model_validate(data)
+def _parse_with_ollama(text: str) -> ParsedUserMessage:
+    base_url = (settings.llm_base_url or DEFAULT_OLLAMA_BASE_URL).rstrip("/")
+    model = settings.llm_model or "qwen3.5:4b"
+    url = f"{base_url}/api/chat"
+    payload = {
+        "model": model,
+        "think": settings.llm_ollama_think,
+        "stream": False,
+        "messages": _llm_messages(text),
+        "options": {
+            "num_predict": settings.llm_max_output_tokens,
+        },
+    }
+
+    with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
+        response = client.post(url, json=payload)
+        response.raise_for_status()
+        data = response.json()
+
+    content = data.get("message", {}).get("content")
+
+    return _parse_llm_content(content, text)
+
+
+def _parse_with_llm(text: str, provider: str) -> ParsedUserMessage:
+    _validate_llm_input(text)
+
+    if provider == "ollama":
+        return _parse_with_ollama(text)
+
+    return _parse_with_openai_compatible(text)
 
 
 def parse_user_message(text: str) -> ParsedUserMessage:
     provider = (settings.llm_provider or "mock").lower()
 
     if not settings.llm_enabled or provider == "mock":
-        return _fallback_parse(text)
+        return _with_parser_metadata(_fallback_parse(text), parser_provider="mock")
 
     if provider not in LLM_PROVIDERS:
-        _log_llm_fallback(RuntimeError("Unsupported LLM provider"), provider=provider)
-        return _fallback_parse(text)
+        error = RuntimeError("Unsupported LLM provider")
+        _log_llm_fallback(error, provider=provider)
+        return _with_parser_metadata(
+            _fallback_parse(text),
+            parser_provider="mock",
+            used_fallback=True,
+            fallback_reason=error.__class__.__name__,
+        )
 
     if provider in LLM_PROVIDERS:
         try:
-            return _parse_with_llm(text)
+            return _with_parser_metadata(
+                _parse_with_llm(text, provider=provider),
+                parser_provider=provider,
+            )
         except Exception as error:
             _log_llm_fallback(error, provider=provider)
-            return _fallback_parse(text)
+            return _with_parser_metadata(
+                _fallback_parse(text),
+                parser_provider="mock",
+                used_fallback=True,
+                fallback_reason=error.__class__.__name__,
+            )
 
-    return _fallback_parse(text)
+    return _with_parser_metadata(_fallback_parse(text), parser_provider="mock")

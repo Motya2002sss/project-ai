@@ -22,7 +22,7 @@ Implemented:
 - Alembic migrations;
 - Telegram bot through aiogram;
 - mock natural-language parser;
-- optional OpenAI/openai-compatible LLM parser;
+- optional OpenAI/openai-compatible/Ollama LLM parser;
 - automatic fallback to mock parser when LLM is unavailable or invalid;
 - user profile storage;
 - long-term goals;
@@ -116,9 +116,11 @@ LLM_PROVIDER=mock
 LLM_BASE_URL=
 LLM_API_KEY=
 LLM_MODEL=
-LLM_TIMEOUT_SECONDS=15
-LLM_MAX_INPUT_CHARS=4000
-LLM_MAX_OUTPUT_TOKENS=800
+LLM_TIMEOUT_SECONDS=30
+LLM_MAX_INPUT_CHARS=1500
+LLM_MAX_OUTPUT_TOKENS=250
+LLM_OLLAMA_THINK=false
+LLM_EVAL_STRICT=false
 ```
 
 For local Telegram usage, set `TELEGRAM_BOT_TOKEN` in `.env`.
@@ -141,9 +143,9 @@ LLM_ENABLED=true
 LLM_PROVIDER=openai
 LLM_API_KEY=<your-local-key>
 LLM_MODEL=gpt-4o-mini
-LLM_TIMEOUT_SECONDS=15
-LLM_MAX_INPUT_CHARS=4000
-LLM_MAX_OUTPUT_TOKENS=800
+LLM_TIMEOUT_SECONDS=30
+LLM_MAX_INPUT_CHARS=1500
+LLM_MAX_OUTPUT_TOKENS=250
 ```
 
 To use an OpenAI-compatible endpoint:
@@ -154,25 +156,30 @@ LLM_PROVIDER=openai-compatible
 LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
 LLM_API_KEY=<your-local-key>
 LLM_MODEL=<model-name>
-LLM_TIMEOUT_SECONDS=15
-LLM_MAX_INPUT_CHARS=4000
-LLM_MAX_OUTPUT_TOKENS=800
+LLM_TIMEOUT_SECONDS=30
+LLM_MAX_INPUT_CHARS=1500
+LLM_MAX_OUTPUT_TOKENS=250
 ```
 
-Local Ollama/Qwen-style development can use the same OpenAI-compatible path:
+OpenAI-compatible means an API that implements `/v1/chat/completions`. Some local providers expose that shape, but native Ollama should use `LLM_PROVIDER=ollama`.
+
+Native Ollama uses `{LLM_BASE_URL}/api/chat` and reads `response["message"]["content"]`:
 
 ```env
 LLM_ENABLED=true
-LLM_PROVIDER=openai-compatible
-LLM_BASE_URL=http://localhost:11434/v1
+LLM_PROVIDER=ollama
+LLM_BASE_URL=http://localhost:11434
 LLM_MODEL=<local-model-name>
 LLM_API_KEY=ollama
-LLM_TIMEOUT_SECONDS=15
-LLM_MAX_INPUT_CHARS=4000
-LLM_MAX_OUTPUT_TOKENS=800
+LLM_TIMEOUT_SECONDS=30
+LLM_MAX_INPUT_CHARS=1500
+LLM_MAX_OUTPUT_TOKENS=250
+LLM_OLLAMA_THINK=false
 ```
 
 The LLM must return JSON that validates as `ParsedUserMessage`. If `LLM_ENABLED=false`, the API key is missing, the provider is `mock`, input is too long, the request times out, the provider returns invalid JSON, or Pydantic validation fails, the system falls back to the mock parser. Telegram users should receive a normal planner response rather than a technical LLM error.
+
+For thinking-capable local models, keep `LLM_OLLAMA_THINK=false` for parser calls unless you are explicitly evaluating that behavior. The parser needs clean JSON, not reasoning text.
 
 The LLM only extracts structure. Database writes, task status changes, plan building, and persistence stay in backend services.
 
@@ -183,6 +190,14 @@ Run the parser eval dataset against the currently configured parser/provider:
 ```bash
 python scripts/eval_parser_cases.py
 ```
+
+Strict LLM eval fails a case when LLM is enabled but the parser fell back to mock:
+
+```bash
+python scripts/eval_parser_cases.py --strict-llm
+```
+
+You can also set `LLM_EVAL_STRICT=true`. The eval summary prints total cases, passed, failed, fallback count, provider, and model.
 
 ## Local Setup
 

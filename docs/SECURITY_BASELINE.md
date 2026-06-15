@@ -113,6 +113,7 @@ When an LLM parser is enabled:
 - invalid or unsafe output falls back to the mock parser;
 - LLM requests must use a bounded timeout and must not block the bot indefinitely;
 - LLM requests must enforce input and output limits before provider calls;
+- thinking-capable local models should use parser-safe settings such as `LLM_OLLAMA_THINK=false` by default;
 - the LLM does not execute commands;
 - the LLM is not the source of truth for database writes;
 - secrets, `.env`, tokens, credentials, and internal config must not be sent to the LLM;

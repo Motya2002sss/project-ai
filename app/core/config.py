@@ -27,9 +27,11 @@ class Settings(BaseSettings):
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
-    llm_timeout_seconds: float = 15.0
-    llm_max_input_chars: int = 4000
-    llm_max_output_tokens: int = 800
+    llm_timeout_seconds: float = 30.0
+    llm_max_input_chars: int = 1500
+    llm_max_output_tokens: int = 250
+    llm_ollama_think: bool = False
+    llm_eval_strict: bool = False
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -75,6 +75,10 @@ class ParsedUserMessage(BaseModel):
 
     raw_text: str | None = None
 
+    parser_provider: str = "mock"
+    used_fallback: bool = False
+    fallback_reason: str | None = None
+
     @field_validator("date", "energy_level", "work_start", "work_until", "sleep_time", mode="before")
     @classmethod
     def normalize_optional_strings(cls, value):
@@ -101,7 +105,7 @@ class ParsedUserMessage(BaseModel):
     def normalize_budget_limit(cls, value):
         return _empty_to_none(value)
 
-    @field_validator("done_task_title", "raw_text", mode="before")
+    @field_validator("done_task_title", "raw_text", "fallback_reason", mode="before")
     @classmethod
     def normalize_optional_text(cls, value):
         if value is None:

@@ -3,6 +3,8 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.llm.parser import parse_user_message
+from app.llm.schemas import ParsedUserMessage
+from scripts import eval_parser_cases
 
 
 CASES_PATH = Path(__file__).parent / "fixtures" / "parser_cases.json"
@@ -61,3 +63,27 @@ def test_mock_parser_eval_dataset(monkeypatch):
 
         if "skipped_task_titles_contains" in expected:
             _assert_contains_all(parsed.skipped_task_titles, expected["skipped_task_titles_contains"])
+
+
+def test_strict_eval_detects_fallback_as_failure(monkeypatch):
+    monkeypatch.setattr(settings, "llm_enabled", True)
+
+    def fake_parse_user_message(text: str) -> ParsedUserMessage:
+        return ParsedUserMessage(
+            intent="show_plan",
+            used_fallback=True,
+            fallback_reason="RuntimeError",
+        )
+
+    monkeypatch.setattr(eval_parser_cases, "parse_user_message", fake_parse_user_message)
+
+    result = eval_parser_cases.evaluate_cases(
+        [{"text": "Покажи план", "expected": {"intent": "show_plan"}}],
+        strict_llm=True,
+    )
+
+    assert result["total"] == 1
+    assert result["passed"] == 0
+    assert result["failed"] == 1
+    assert result["fallback_count"] == 1
+    assert result["failures"][0][2] == "fallback"

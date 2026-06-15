@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -5,6 +6,7 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
+from app.core.config import settings
 from app.llm.parser import parse_user_message
 
 
@@ -64,29 +66,75 @@ def _case_passes(parsed, expected: dict) -> bool:
     return True
 
 
-def main() -> None:
-    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+def evaluate_cases(cases: list[dict], strict_llm: bool) -> dict:
     failures = []
+    fallback_count = 0
+    model = settings.llm_model if settings.llm_enabled and settings.llm_provider != "mock" else "mock"
 
     for index, case in enumerate(cases, start=1):
         parsed = parse_user_message(case["text"])
         expected = case["expected"]
+        used_fallback = parsed.used_fallback
 
-        if not _case_passes(parsed, expected):
-            failures.append((index, case["text"], expected, parsed.model_dump()))
+        if used_fallback:
+            fallback_count += 1
+
+        failed_by_expected_shape = not _case_passes(parsed, expected)
+        failed_by_strict_fallback = strict_llm and settings.llm_enabled and used_fallback
+
+        if failed_by_expected_shape or failed_by_strict_fallback:
+            reason = "fallback" if failed_by_strict_fallback else "expected_shape"
+            failures.append((index, case["text"], reason, expected, parsed.model_dump()))
 
     total = len(cases)
     passed = total - len(failures)
 
-    print(f"parser eval: {passed}/{total} passed")
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": len(failures),
+        "fallback_count": fallback_count,
+        "provider": settings.llm_provider,
+        "model": model or "mock",
+        "strict_llm": strict_llm,
+        "failures": failures,
+    }
 
-    for index, text, expected, actual in failures:
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate parser behavior against fixture cases.")
+    parser.add_argument(
+        "--strict-llm",
+        action="store_true",
+        help="Fail cases when LLM is enabled and parser falls back to mock.",
+    )
+
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = _parse_args()
+    strict_llm = args.strict_llm or settings.llm_eval_strict
+    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    result = evaluate_cases(cases, strict_llm=strict_llm)
+
+    print("parser eval summary")
+    print(f"provider: {result['provider']}")
+    print(f"model: {result['model']}")
+    print(f"strict_llm: {result['strict_llm']}")
+    print(f"total cases: {result['total']}")
+    print(f"passed: {result['passed']}")
+    print(f"failed: {result['failed']}")
+    print(f"fallback_count: {result['fallback_count']}")
+
+    for index, text, reason, expected, actual in result["failures"]:
         print(f"\nCase {index} failed")
+        print(f"Reason: {reason}")
         print(f"Text: {text}")
         print(f"Expected: {expected}")
         print(f"Actual: {actual}")
 
-    if failures:
+    if result["failures"]:
         raise SystemExit(1)
 
 

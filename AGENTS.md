@@ -27,7 +27,7 @@ The repository already contains a working MVP foundation:
 - Alembic migrations;
 - Telegram bot through aiogram;
 - mock natural-language parser;
-- optional OpenAI/openai-compatible parser integration with mock fallback;
+- optional OpenAI/openai-compatible/Ollama parser integration with mock fallback;
 - user profile flow;
 - goals flow;
 - tasks flow;
@@ -56,7 +56,7 @@ Treat these pieces as active product code. Preserve the existing MVP flows unles
 
 ## Parser And LLM Rules
 
-The default parser is the mock parser. Real LLM parsing can be enabled through `LLM_PROVIDER=openai` or `LLM_PROVIDER=openai-compatible`.
+The default parser is the mock parser. Real LLM parsing can be enabled through `LLM_PROVIDER=openai`, `LLM_PROVIDER=openai-compatible`, or native `LLM_PROVIDER=ollama`.
 
 Parser or LLM responsibilities:
 
@@ -78,6 +78,8 @@ LLM integration rules:
 - keep the mock parser as fallback;
 - keep `LLM_ENABLED=false` as the safe default;
 - enforce `LLM_MAX_INPUT_CHARS`, `LLM_MAX_OUTPUT_TOKENS`, and `LLM_TIMEOUT_SECONDS`;
+- use native Ollama `/api/chat` for `LLM_PROVIDER=ollama`;
+- keep `LLM_OLLAMA_THINK=false` by default for parser calls;
 - ask the LLM for structured JSON only;
 - validate JSON through Pydantic or equivalent schemas;
 - treat LLM output as untrusted input;

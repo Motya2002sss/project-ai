@@ -58,8 +58,8 @@ The current MVP supports:
 - User profile storage.
 - Goal storage.
 - Task creation from natural language through the mock parser.
-- Optional OpenAI/openai-compatible parser integration with mock fallback.
-- Parser evaluation cases for comparing mock and future provider behavior.
+- Optional OpenAI/openai-compatible/native Ollama parser integration with mock fallback.
+- Parser evaluation cases for comparing mock, local, and hosted provider behavior.
 - Task `target_date` for today/tomorrow separation.
 - Goal-task suggestions through backend heuristics.
 - Day planning with work end, sleep, energy, priority, and duration.
