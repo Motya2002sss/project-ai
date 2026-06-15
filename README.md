@@ -111,11 +111,14 @@ TELEGRAM_BOT_TOKEN=
 PLAN_START_BUFFER_MINUTES=30
 DEFAULT_PLAN_START_TIME=18:30
 
+LLM_ENABLED=false
 LLM_PROVIDER=mock
 LLM_BASE_URL=
 LLM_API_KEY=
 LLM_MODEL=
 LLM_TIMEOUT_SECONDS=15
+LLM_MAX_INPUT_CHARS=4000
+LLM_MAX_OUTPUT_TOKENS=800
 ```
 
 For local Telegram usage, set `TELEGRAM_BOT_TOKEN` in `.env`.
@@ -127,31 +130,59 @@ Never commit `.env`, real tokens, real API keys, cookies, passwords, or private 
 The default parser is local and deterministic:
 
 ```text
+LLM_ENABLED=false
 LLM_PROVIDER=mock
 ```
 
 To enable OpenAI:
 
 ```text
+LLM_ENABLED=true
 LLM_PROVIDER=openai
 LLM_API_KEY=<your-local-key>
 LLM_MODEL=gpt-4o-mini
 LLM_TIMEOUT_SECONDS=15
+LLM_MAX_INPUT_CHARS=4000
+LLM_MAX_OUTPUT_TOKENS=800
 ```
 
 To use an OpenAI-compatible endpoint:
 
 ```text
+LLM_ENABLED=true
 LLM_PROVIDER=openai-compatible
 LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
 LLM_API_KEY=<your-local-key>
 LLM_MODEL=<model-name>
 LLM_TIMEOUT_SECONDS=15
+LLM_MAX_INPUT_CHARS=4000
+LLM_MAX_OUTPUT_TOKENS=800
 ```
 
-The LLM must return JSON that validates as `ParsedUserMessage`. If the API key is missing, the provider is `mock`, the request times out, the provider returns invalid JSON, or Pydantic validation fails, the system falls back to the mock parser. Telegram users should receive a normal planner response rather than a technical LLM error.
+Local Ollama/Qwen-style development can use the same OpenAI-compatible path:
+
+```env
+LLM_ENABLED=true
+LLM_PROVIDER=openai-compatible
+LLM_BASE_URL=http://localhost:11434/v1
+LLM_MODEL=<local-model-name>
+LLM_API_KEY=ollama
+LLM_TIMEOUT_SECONDS=15
+LLM_MAX_INPUT_CHARS=4000
+LLM_MAX_OUTPUT_TOKENS=800
+```
+
+The LLM must return JSON that validates as `ParsedUserMessage`. If `LLM_ENABLED=false`, the API key is missing, the provider is `mock`, input is too long, the request times out, the provider returns invalid JSON, or Pydantic validation fails, the system falls back to the mock parser. Telegram users should receive a normal planner response rather than a technical LLM error.
 
 The LLM only extracts structure. Database writes, task status changes, plan building, and persistence stay in backend services.
+
+Parser evaluation cases live in `tests/fixtures/parser_cases.json`. Tests run these cases against the mock parser without making real LLM calls. Local models are useful for development and comparison, but they are not required for production.
+
+Run the parser eval dataset against the currently configured parser/provider:
+
+```bash
+python scripts/eval_parser_cases.py
+```
 
 ## Local Setup
 

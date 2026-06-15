@@ -39,6 +39,7 @@ The repository already contains a working MVP foundation:
 - mark done flow;
 - daily summary flow;
 - smoke-check script at `scripts/check_mvp.py`;
+- parser eval dataset at `tests/fixtures/parser_cases.json`;
 - product, UAT, and security docs in `docs/`.
 
 Treat these pieces as active product code. Preserve the existing MVP flows unless the user explicitly asks to change them.
@@ -75,12 +76,15 @@ Backend responsibilities:
 LLM integration rules:
 
 - keep the mock parser as fallback;
+- keep `LLM_ENABLED=false` as the safe default;
+- enforce `LLM_MAX_INPUT_CHARS`, `LLM_MAX_OUTPUT_TOKENS`, and `LLM_TIMEOUT_SECONDS`;
 - ask the LLM for structured JSON only;
 - validate JSON through Pydantic or equivalent schemas;
 - treat LLM output as untrusted input;
 - do not let the LLM directly execute commands;
 - do not let the LLM directly mutate database state;
 - do not send `.env`, tokens, credentials, private URLs, or internal config to the LLM.
+- log fallback warnings safely without API keys, Authorization headers, cookies, `.env`, or full database URLs.
 
 ## Product Universality
 

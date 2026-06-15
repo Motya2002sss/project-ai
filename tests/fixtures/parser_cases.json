@@ -1,0 +1,227 @@
+[
+  {
+    "text": "Мой график с 10 до 19, хочу спать в 00:30",
+    "expected": {
+      "intent": "update_profile",
+      "work_start": "10:00",
+      "work_until": "19:00",
+      "sleep_time": "00:30"
+    }
+  },
+  {
+    "text": "Обычно работаю с 8 до 17",
+    "expected": {
+      "intent": "update_profile",
+      "work_start": "08:00",
+      "work_until": "17:00"
+    }
+  },
+  {
+    "text": "Хочу спать в 23:00",
+    "expected": {
+      "intent": "update_profile",
+      "sleep_time": "23:00"
+    }
+  },
+  {
+    "text": "Покажи профиль",
+    "expected": {
+      "intent": "show_profile"
+    }
+  },
+  {
+    "text": "Моя цель: накопить 500000 рублей, научиться рисовать, сделать мобильное приложение",
+    "expected": {
+      "intent": "update_goals",
+      "goals_contains": ["накопить 500000 рублей", "научиться рисовать", "сделать мобильное приложение"]
+    }
+  },
+  {
+    "text": "Мои цели: здоровье, семья, творчество",
+    "expected": {
+      "intent": "update_goals",
+      "goals_contains": ["здоровье", "семья", "творчество"]
+    }
+  },
+  {
+    "text": "Цель: закрыть кредит и вести бюджет",
+    "expected": {
+      "intent": "update_goals",
+      "goals_contains": ["закрыть кредит", "вести бюджет"]
+    }
+  },
+  {
+    "text": "Долгосрочная цель: поступить в магистратуру",
+    "expected": {
+      "intent": "update_goals",
+      "goals_contains": ["поступить в магистратуру"]
+    }
+  },
+  {
+    "text": "Покажи цели",
+    "expected": {
+      "intent": "show_goals"
+    }
+  },
+  {
+    "text": "Что сделать для целей?",
+    "expected": {
+      "intent": "suggest_goal_tasks"
+    }
+  },
+  {
+    "text": "Как продвинуться по целям завтра?",
+    "expected": {
+      "intent": "suggest_goal_tasks",
+      "date": "tomorrow"
+    }
+  },
+  {
+    "text": "Сегодня хочу разобрать документы",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "today",
+      "tasks_contains": ["разобрать документы"]
+    }
+  },
+  {
+    "text": "Завтра хочу позаниматься математикой",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "tomorrow",
+      "tasks_contains": ["позаниматься математикой"]
+    }
+  },
+  {
+    "text": "Нужно купить продукты, позвонить маме",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_contains": ["купить продукты", "позвонить маме"]
+    }
+  },
+  {
+    "text": "Планирую подготовиться к экзамену",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_contains": ["подготовиться к экзамену"],
+      "task_priorities_contains": ["high"]
+    }
+  },
+  {
+    "text": "Сегодня мало сил, хочу оплатить счета",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "today",
+      "energy_level": "low"
+    }
+  },
+  {
+    "text": "Покажи план завтра",
+    "expected": {
+      "intent": "show_plan",
+      "date": "tomorrow"
+    }
+  },
+  {
+    "text": "Какой план на день?",
+    "expected": {
+      "intent": "show_plan"
+    }
+  },
+  {
+    "text": "Покажи задачи",
+    "expected": {
+      "intent": "show_tasks"
+    }
+  },
+  {
+    "text": "Какие задачи на сегодня?",
+    "expected": {
+      "intent": "show_tasks",
+      "date": "today"
+    }
+  },
+  {
+    "text": "Документы сделал",
+    "expected": {
+      "intent": "mark_done",
+      "done_task_title_contains": "документы"
+    }
+  },
+  {
+    "text": "Отметь подготовку как готово",
+    "expected": {
+      "intent": "mark_done",
+      "done_task_title_contains": "подготовку"
+    }
+  },
+  {
+    "text": "Итог дня: документы сделал, математику не сделал",
+    "expected": {
+      "intent": "daily_summary",
+      "done_task_titles_contains": ["документы"],
+      "skipped_task_titles_contains": ["математику"]
+    }
+  },
+  {
+    "text": "Итоги дня: купил продукты, не успел бюджет",
+    "expected": {
+      "intent": "daily_summary",
+      "done_task_titles_contains": ["продукты"],
+      "skipped_task_titles_contains": ["бюджет"]
+    }
+  },
+  {
+    "text": "Я задержался до 20",
+    "expected": {
+      "intent": "reschedule",
+      "work_until": "20:00"
+    }
+  },
+  {
+    "text": "Освобожусь в 21",
+    "expected": {
+      "intent": "reschedule",
+      "work_until": "21:00"
+    }
+  },
+  {
+    "text": "Работаю до 19",
+    "expected": {
+      "intent": "reschedule",
+      "work_until": "19:00"
+    }
+  },
+  {
+    "text": "Очисти задачи",
+    "expected": {
+      "intent": "clear_tasks"
+    }
+  },
+  {
+    "text": "/clear",
+    "expected": {
+      "intent": "clear_tasks"
+    }
+  },
+  {
+    "text": "/plan",
+    "expected": {
+      "intent": "show_plan"
+    }
+  },
+  {
+    "text": "/tasks",
+    "expected": {
+      "intent": "show_tasks"
+    }
+  },
+  {
+    "text": "Я обычно работаю весь день, вечером сил мало. Хочу подтянуть финансы и учебу. Сегодня могу выделить часа два.",
+    "expected": {
+      "intent": "update_profile",
+      "date": "today",
+      "energy_level": "low"
+    }
+  }
+]

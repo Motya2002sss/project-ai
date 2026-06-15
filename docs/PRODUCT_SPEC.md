@@ -59,6 +59,7 @@ The current MVP supports:
 - Goal storage.
 - Task creation from natural language through the mock parser.
 - Optional OpenAI/openai-compatible parser integration with mock fallback.
+- Parser evaluation cases for comparing mock and future provider behavior.
 - Task `target_date` for today/tomorrow separation.
 - Goal-task suggestions through backend heuristics.
 - Day planning with work end, sleep, energy, priority, and duration.
@@ -67,7 +68,7 @@ The current MVP supports:
 
 ## Next
 
-1. Improve LLM parsing quality with eval scenarios, stricter prompts, and production monitoring.
+1. Improve LLM parsing quality with eval scenarios, provider comparisons, stricter prompts, and production monitoring.
 2. Add FastAPI endpoints for profile, goals, tasks, plans, and natural-language messages.
 3. Build a Web UI on top of the same services after backend and Telegram MVP remain stable.
 4. Improve planning quality with better scheduling rules, conflict handling, and goal progress history.

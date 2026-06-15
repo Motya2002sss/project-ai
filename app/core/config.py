@@ -22,11 +22,14 @@ class Settings(BaseSettings):
     plan_start_buffer_minutes: int = 30
     default_plan_start_time: str = "18:30"
 
+    llm_enabled: bool = False
     llm_provider: str = "mock"
     llm_base_url: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
     llm_timeout_seconds: float = 15.0
+    llm_max_input_chars: int = 4000
+    llm_max_output_tokens: int = 800
 
     model_config = SettingsConfigDict(
         env_file=".env",

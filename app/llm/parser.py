@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 
 from openai import OpenAI
@@ -10,6 +11,52 @@ from app.llm.schemas import ParsedTask, ParsedUserMessage
 
 LLM_PROVIDERS = {"openai", "openai-compatible", "custom"}
 DEFAULT_LLM_MODEL = "gpt-4o-mini"
+MAX_LOG_MESSAGE_CHARS = 300
+
+logger = logging.getLogger(__name__)
+
+
+class LLMInputTooLongError(ValueError):
+    pass
+
+
+def _sanitize_error_message(error: Exception) -> str:
+    message = str(error) or error.__class__.__name__
+
+    sensitive_values = [
+        settings.llm_api_key,
+        settings.telegram_bot_token,
+        settings.database_url,
+        settings.postgres_password,
+    ]
+
+    for value in sensitive_values:
+        if value:
+            message = message.replace(value, "[redacted]")
+
+    message = re.sub(r"(?i)(authorization\s*[:=]\s*bearer\s+)\S+", r"\1[redacted]", message)
+    message = re.sub(r"(?i)(api[_-]?key\s*[:=]\s*)\S+", r"\1[redacted]", message)
+    message = re.sub(r"sk-[A-Za-z0-9_-]+", "sk-[redacted]", message)
+    message = re.sub(
+        r"postgresql(?:\+psycopg)?://[^\s]+",
+        "postgresql://[redacted]",
+        message,
+        flags=re.IGNORECASE,
+    )
+    message = re.sub(r"\s+", " ", message).strip()
+
+    return message[:MAX_LOG_MESSAGE_CHARS]
+
+
+def _log_llm_fallback(error: Exception, provider: str) -> None:
+    logger.warning(
+        "LLM parser fallback to mock: provider=%s model=%s error_class=%s error=%s",
+        provider,
+        settings.llm_model or DEFAULT_LLM_MODEL,
+        error.__class__.__name__,
+        _sanitize_error_message(error),
+    )
+
 
 SKIP_PATTERNS = [
     "работаю до",
@@ -370,6 +417,17 @@ def _detect_intent(text: str) -> str:
     ):
         return "suggest_goal_tasks"
 
+    if (
+        re.search(r"^мои\s+цели\s*[:\-]", lowered)
+        or any(phrase in lowered for phrase in [
+            "моя цель",
+            "цель:",
+            "цели:",
+            "долгосрочная цель",
+        ])
+    ):
+        return "update_goals"
+
     if any(phrase in lowered for phrase in [
         "покажи цели",
         "мои цели",
@@ -377,15 +435,6 @@ def _detect_intent(text: str) -> str:
         "что по целям",
     ]):
         return "show_goals"
-
-    if any(phrase in lowered for phrase in [
-        "моя цель",
-        "мои цели",
-        "цель:",
-        "цели:",
-        "долгосрочная цель",
-    ]):
-        return "update_goals"
 
     if any(phrase in lowered for phrase in [
         "мой профиль",
@@ -578,6 +627,11 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
 
 
 def _parse_with_llm(text: str) -> ParsedUserMessage:
+    if len(text) > settings.llm_max_input_chars:
+        raise LLMInputTooLongError(
+            f"input length {len(text)} exceeds LLM_MAX_INPUT_CHARS={settings.llm_max_input_chars}"
+        )
+
     if not settings.llm_api_key:
         raise RuntimeError("LLM API key is not configured")
 
@@ -592,6 +646,7 @@ def _parse_with_llm(text: str) -> ParsedUserMessage:
     response = client.chat.completions.create(
         model=model,
         temperature=0,
+        max_tokens=settings.llm_max_output_tokens,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -613,10 +668,18 @@ def _parse_with_llm(text: str) -> ParsedUserMessage:
 def parse_user_message(text: str) -> ParsedUserMessage:
     provider = (settings.llm_provider or "mock").lower()
 
-    if provider in LLM_PROVIDERS and settings.llm_api_key:
+    if not settings.llm_enabled or provider == "mock":
+        return _fallback_parse(text)
+
+    if provider not in LLM_PROVIDERS:
+        _log_llm_fallback(RuntimeError("Unsupported LLM provider"), provider=provider)
+        return _fallback_parse(text)
+
+    if provider in LLM_PROVIDERS:
         try:
             return _parse_with_llm(text)
-        except Exception:
+        except Exception as error:
+            _log_llm_fallback(error, provider=provider)
             return _fallback_parse(text)
 
     return _fallback_parse(text)

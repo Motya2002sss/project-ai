@@ -18,6 +18,7 @@ from app.services.task_service import (
 
 
 def main() -> None:
+    settings.llm_enabled = False
     settings.llm_provider = "mock"
     settings.llm_api_key = None
 
