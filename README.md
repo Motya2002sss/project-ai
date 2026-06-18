@@ -24,6 +24,8 @@ Implemented:
 - mock natural-language parser;
 - optional OpenAI/openai-compatible/Ollama LLM parser;
 - automatic fallback to mock parser when LLM is unavailable or invalid;
+- shared message processing service for Telegram text, Web text, and future voice transcripts;
+- minimal FastAPI Web API foundation;
 - user profile storage;
 - long-term goals;
 - tasks;
@@ -46,9 +48,9 @@ Not ready yet:
 - Web UI;
 - production authentication;
 - production deployment;
-- full FastAPI product API for a future Web UI.
+- full production Web API surface for all future Web UI workflows.
 
-FastAPI currently provides the backend foundation and `/health`. The primary MVP interface is Telegram, and the bot uses the same service layer that future API endpoints should use.
+FastAPI currently provides `/health` and a minimal `/api` foundation for future Web UI work. The primary MVP interface is still Telegram, and both Telegram and API flows should converge on the same parser, service, and planner layers.
 
 ## Project Structure
 
@@ -272,7 +274,49 @@ Expected response:
 }
 ```
 
-### 6. Run Telegram Bot
+### 6. Use The Web API Foundation
+
+The MVP API is intentionally small. It prepares the backend for a future Web UI and for future voice input without adding a frontend or production auth yet.
+
+Supported input sources:
+
+```text
+web_text
+telegram_text
+telegram_voice_transcript
+```
+
+Future voice flow should be:
+
+```text
+voice/audio -> speech-to-text -> text -> process_user_message -> parser -> services -> planner
+```
+
+Message endpoint:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_external_id": "local-user-1",
+    "source": "web_text",
+    "text": "Сегодня хочу разобрать документы"
+  }'
+```
+
+Read endpoints:
+
+```text
+GET /api/profile/{user_external_id}
+GET /api/goals/{user_external_id}
+GET /api/tasks/{user_external_id}
+GET /api/plan/{user_external_id}?date=today
+GET /api/plan/{user_external_id}?date=tomorrow
+```
+
+`user_external_id` is a temporary MVP identifier for local/API experiments. It is not production authentication and must not be treated as a secure user identity in public deployments.
+
+### 7. Run Telegram Bot
 
 Set `TELEGRAM_BOT_TOKEN` in `.env`, then run:
 

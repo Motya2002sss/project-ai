@@ -75,7 +75,7 @@ Push only when `origin` points to the intended repository.
 
 ## FastAPI Baseline
 
-For future API work:
+For API work:
 
 - validate request bodies with Pydantic schemas;
 - do not trust user input;
@@ -84,6 +84,7 @@ For future API work:
 - do not use production CORS wildcard settings;
 - do not add debug endpoints that reveal env, config, tokens, stack traces, or credentials;
 - keep user-facing errors understandable without exposing internals.
+- keep API endpoints thin and route user requests through services, parser, and planner layers.
 
 ## Database Safety
 
@@ -101,8 +102,10 @@ Telegram users must only see their own data. Queries for goals, tasks, plans, an
 Current MVP rule:
 
 - Telegram user is resolved through `get_or_create_user()`.
+- Web/API MVP users are resolved through `user_external_id`.
+- `user_external_id` is a local MVP identifier and not production authentication.
 - Task, goal, and plan service queries must include `user_id` filters for user-owned data.
-- Future Web API must introduce an explicit auth strategy before exposing user data beyond local development.
+- Production Web API must introduce an explicit auth strategy before exposing user data beyond local development.
 
 ## LLM Safety
 

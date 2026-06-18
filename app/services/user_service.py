@@ -32,6 +32,37 @@ def get_or_create_user(
     return user
 
 
+def get_or_create_user_by_external_id(
+    db: Session,
+    external_id: str,
+    name: str | None = None,
+) -> User:
+    normalized_external_id = external_id.strip()
+
+    if not normalized_external_id:
+        raise ValueError("external_id must not be empty")
+
+    user = db.query(User).filter(User.external_id == normalized_external_id).one_or_none()
+
+    if user:
+        if name and user.name != name:
+            user.name = name
+            db.commit()
+            db.refresh(user)
+        return user
+
+    user = User(
+        external_id=normalized_external_id,
+        name=name,
+    )
+
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+
+    return user
+
+
 def _parse_hhmm(value: str | None) -> time | None:
     if not value:
         return None

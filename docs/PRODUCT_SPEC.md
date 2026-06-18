@@ -48,16 +48,23 @@ The backend owns state and planning rules. The parser or optional LLM extracts m
    - User can say they are delayed or free later.
    - The plan is rebuilt from the new available time.
 
+8. Web and future voice input
+   - Web text and Telegram text should enter the same message processing pipeline.
+   - Future voice/audio input should become speech-to-text first, then use the same text parser and backend services.
+   - The API returns structured responses that a future Web UI can render without duplicating planning logic.
+
 ## MVP Status
 
 The current MVP supports:
 
 - Telegram bot as the primary interface.
-- FastAPI health endpoint as the backend foundation.
+- FastAPI health endpoint and minimal Web API foundation.
 - PostgreSQL persistence with SQLAlchemy and Alembic.
 - User profile storage.
 - Goal storage.
 - Task creation from natural language through the mock parser.
+- Shared message processing service for Telegram text, Web text, and future voice transcript inputs.
+- API endpoints for message processing, profile, goals, tasks, and today/tomorrow plan reads.
 - Optional OpenAI/openai-compatible/native Ollama parser integration with mock fallback.
 - Parser evaluation cases for comparing mock, local, and hosted provider behavior.
 - Task `target_date` for today/tomorrow separation.
@@ -69,6 +76,7 @@ The current MVP supports:
 ## Next
 
 1. Improve LLM parsing quality with eval scenarios, provider comparisons, stricter prompts, and production monitoring.
-2. Add FastAPI endpoints for profile, goals, tasks, plans, and natural-language messages.
-3. Build a Web UI on top of the same services after backend and Telegram MVP remain stable.
-4. Improve planning quality with better scheduling rules, conflict handling, and goal progress history.
+2. Expand the Web API only where the future Web UI needs additional workflow coverage.
+3. Add production authentication before exposing the Web API outside local development.
+4. Build a Web UI on top of the same services after backend and Telegram MVP remain stable.
+5. Improve planning quality with better scheduling rules, conflict handling, and goal progress history.

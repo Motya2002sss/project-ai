@@ -26,8 +26,10 @@ The repository already contains a working MVP foundation:
 - SQLAlchemy models;
 - Alembic migrations;
 - Telegram bot through aiogram;
+- minimal FastAPI Web API foundation;
 - mock natural-language parser;
 - optional OpenAI/openai-compatible/Ollama parser integration with mock fallback;
+- shared message processing service for Telegram text, Web text, and future voice transcripts;
 - user profile flow;
 - goals flow;
 - tasks flow;
@@ -50,7 +52,9 @@ Treat these pieces as active product code. Preserve the existing MVP flows unles
 - Business logic belongs in `app/services/`.
 - Database state belongs in SQLAlchemy models and PostgreSQL.
 - Schema changes belong in Alembic migrations.
-- Telegram bot and future Web API must use the same service layer.
+- Telegram bot and Web API must use the same service layer where practical.
+- New text input channels must converge on the shared message processing pipeline.
+- Future voice/audio input should be converted to text first, then routed through the same parser and services.
 - Important state must not live only inside chat history or LLM messages.
 - User-owned reads and writes must filter by user context, usually `user_id`.
 
