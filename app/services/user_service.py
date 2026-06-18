@@ -36,6 +36,7 @@ def get_or_create_user_by_external_id(
     db: Session,
     external_id: str,
     name: str | None = None,
+    telegram_id: int | None = None,
 ) -> User:
     normalized_external_id = external_id.strip()
 
@@ -45,14 +46,45 @@ def get_or_create_user_by_external_id(
     user = db.query(User).filter(User.external_id == normalized_external_id).one_or_none()
 
     if user:
+        changed = False
+
+        if telegram_id is not None and user.telegram_id is None:
+            user.telegram_id = telegram_id
+            changed = True
+
         if name and user.name != name:
             user.name = name
+            changed = True
+
+        if changed:
             db.commit()
             db.refresh(user)
+
         return user
+
+    if telegram_id is not None:
+        user = db.query(User).filter(User.telegram_id == telegram_id).one_or_none()
+
+        if user:
+            changed = False
+
+            if user.external_id is None:
+                user.external_id = normalized_external_id
+                changed = True
+
+            if name and user.name != name:
+                user.name = name
+                changed = True
+
+            if changed:
+                db.commit()
+                db.refresh(user)
+
+            return user
 
     user = User(
         external_id=normalized_external_id,
+        telegram_id=telegram_id,
         name=name,
     )
 

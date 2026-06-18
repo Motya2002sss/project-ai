@@ -39,6 +39,27 @@ from app.services.user_service import (
 )
 
 
+def _planning_context_hint(user: User) -> str:
+    if user.work_end_time and user.sleep_time:
+        return ""
+
+    missing = []
+
+    if not user.work_end_time:
+        missing.append("рабочее время")
+
+    if not user.sleep_time:
+        missing.append("время сна")
+
+    missing_text = " и ".join(missing)
+
+    return (
+        f"\n\nПлан построен с настройками по умолчанию. "
+        f"Чтобы точнее учитывать {missing_text}, напиши обычным текстом: "
+        "«Мой график с 10 до 19, хочу спать в 00:30»."
+    )
+
+
 def task_to_response(task: Task) -> TaskResponse:
     return TaskResponse(
         id=task.id,
@@ -124,8 +145,15 @@ def process_user_message(
     user_external_id: str,
     text: str,
     source: MessageSource = "telegram_text",
+    user_name: str | None = None,
+    telegram_id: int | None = None,
 ) -> MessageResponse:
-    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    user = get_or_create_user_by_external_id(
+        db=db,
+        external_id=user_external_id,
+        name=user_name,
+        telegram_id=telegram_id,
+    )
     parsed_message = parse_user_message(text)
 
     if parsed_message.intent == "show_goals":
@@ -192,7 +220,7 @@ def process_user_message(
         plan_text = format_day_plan(day_plan)
         task_lines = "\n".join(f"- {task.title}" for task in tasks)
         prefix = f"Добавил задачи по целям:\n\n{task_lines}" if tasks else "Задачи по целям уже есть в активном плане."
-        reply_text = f"{prefix}\n\nПлан дня:\n\n{plan_text}"
+        reply_text = f"{prefix}\n\nПлан дня:\n\n{plan_text}{_planning_context_hint(user)}"
 
         return _base_response(
             user_external_id,
@@ -230,7 +258,7 @@ def process_user_message(
 
     if parsed_message.intent == "show_plan":
         day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-        reply_text = f"Текущий план дня:\n\n{format_day_plan(day_plan)}"
+        reply_text = f"Текущий план дня:\n\n{format_day_plan(day_plan)}{_planning_context_hint(user)}"
         return _base_response(
             user_external_id,
             source,
@@ -253,7 +281,7 @@ def process_user_message(
     if parsed_message.intent == "clear_tasks":
         count = clear_user_tasks(db=db, user=user)
         day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-        reply_text = f"Очистил задачи: {count}.\n\nПлан дня очищен."
+        reply_text = f"Очистил задачи: {count}.\n\nПлан дня очищен.{_planning_context_hint(user)}"
         return _base_response(
             user_external_id,
             source,
@@ -284,7 +312,7 @@ def process_user_message(
             "Итог дня принял.\n\n"
             f"Выполнено:\n{done_text}\n\n"
             f"Осталось активным:\n{skipped_text}\n\n"
-            f"Обновленный план:\n\n{plan_text}"
+            f"Обновленный план:\n\n{plan_text}{_planning_context_hint(user)}"
         )
         return _base_response(
             user_external_id,
@@ -313,7 +341,10 @@ def process_user_message(
             return _base_response(user_external_id, source, parsed_message, reply_text)
 
         day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-        reply_text = f"Отметил выполненной:\n\n{task.title}\n\nОбновленный план:\n\n{format_day_plan(day_plan)}"
+        reply_text = (
+            f"Отметил выполненной:\n\n{task.title}\n\n"
+            f"Обновленный план:\n\n{format_day_plan(day_plan)}{_planning_context_hint(user)}"
+        )
         return _base_response(
             user_external_id,
             source,
@@ -325,7 +356,10 @@ def process_user_message(
 
     if parsed_message.intent == "reschedule":
         day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-        reply_text = f"Ок, перепланировал день с учетом изменений:\n\n{format_day_plan(day_plan)}"
+        reply_text = (
+            "Ок, перепланировал день с учетом изменений:\n\n"
+            f"{format_day_plan(day_plan)}{_planning_context_hint(user)}"
+        )
         return _base_response(
             user_external_id,
             source,
@@ -337,7 +371,10 @@ def process_user_message(
     tasks = create_tasks_from_parsed_message(db=db, user=user, parsed_message=parsed_message)
     day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
     task_lines = "\n".join(f"- {task.title}" for task in tasks) if tasks else "Новых задач нет."
-    reply_text = f"Принял. Добавил задачи:\n\n{task_lines}\n\nПлан дня:\n\n{format_day_plan(day_plan)}"
+    reply_text = (
+        f"Принял. Добавил задачи:\n\n{task_lines}\n\n"
+        f"План дня:\n\n{format_day_plan(day_plan)}{_planning_context_hint(user)}"
+    )
 
     return _base_response(
         user_external_id,

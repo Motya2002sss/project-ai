@@ -7,30 +7,15 @@ from aiogram.types import Message
 
 from app.core.config import settings
 from app.db.session import SessionLocal
-from app.llm.parser import parse_user_message
-from app.services.goal_service import (
-    create_goals_from_titles,
-    format_goals,
-    list_active_goals,
-    suggest_tasks_from_goals,
-)
-from app.services.planning_service import format_day_plan, get_plan_date, rebuild_day_plan, rebuild_today_plan
+from app.services.message_service import process_user_message
+from app.services.planning_service import format_day_plan, rebuild_today_plan
 from app.services.task_service import (
     clear_user_tasks,
-    create_tasks_from_parsed_message,
-    create_tasks_from_parsed_tasks,
-    find_active_tasks_by_titles,
     format_tasks,
     list_active_tasks,
     mark_task_done,
-    mark_task_done_by_title,
-    mark_tasks_done_by_titles,
 )
-from app.services.user_service import (
-    format_user_profile,
-    get_or_create_user,
-    update_user_profile_from_parsed_message,
-)
+from app.services.user_service import get_or_create_user
 
 logging.basicConfig(level=logging.INFO)
 
@@ -188,239 +173,17 @@ async def handle_text_message(message: Message) -> None:
         await message.answer("Пока я умею обрабатывать только текстовые сообщения.")
         return
 
-    parsed_message = parse_user_message(text)
-
     with SessionLocal() as db:
-        user = get_or_create_user(
+        response = process_user_message(
             db=db,
+            user_external_id=f"telegram:{telegram_user.id}",
+            text=text,
+            source="telegram_text",
+            user_name=telegram_user.full_name,
             telegram_id=telegram_user.id,
-            name=telegram_user.full_name,
         )
 
-        if parsed_message.intent == "show_goals":
-            goals = list_active_goals(db=db, user=user)
-            goals_text = format_goals(goals)
-
-            await message.answer(
-                "Твои цели:\n\n"
-                f"{goals_text}"
-            )
-            return
-
-        if parsed_message.intent == "update_goals":
-            goals = create_goals_from_titles(
-                db=db,
-                user=user,
-                titles=parsed_message.goals,
-            )
-
-            goals_text = format_goals(list_active_goals(db=db, user=user))
-
-            if goals:
-                await message.answer(
-                    "Запомнил цели:\n\n"
-                    + "\n".join(f"— {goal.title}" for goal in goals)
-                    + "\n\nТекущий список целей:\n\n"
-                    + goals_text
-                )
-            else:
-                await message.answer(
-                    "Не нашел новых целей или они уже были добавлены.\n\n"
-                    f"Текущий список целей:\n\n{goals_text}"
-                )
-            return
-
-        if parsed_message.intent == "suggest_goal_tasks":
-            goals = list_active_goals(db=db, user=user)
-
-            if not goals:
-                await message.answer(
-                    "Пока нет активных целей.\n\n"
-                    "Напиши обычным текстом, к чему хочешь прийти. Например: "
-                    "«Моя цель: накопить резерв, научиться рисовать, улучшить здоровье»."
-                )
-                return
-
-            suggested_tasks = suggest_tasks_from_goals(goals)
-            tasks = create_tasks_from_parsed_tasks(
-                db=db,
-                user=user,
-                parsed_tasks=suggested_tasks,
-                parsed_message=parsed_message,
-            )
-
-            day_plan = rebuild_day_plan(
-                db=db,
-                user=user,
-                parsed_message=parsed_message,
-            )
-            plan_text = format_day_plan(day_plan)
-            hint = _planning_context_hint(user)
-
-            if tasks:
-                task_lines = "\n".join(f"— {task.title}" for task in tasks)
-                prefix = f"Добавил задачи по целям:\n\n{task_lines}"
-            else:
-                prefix = "Задачи по целям уже есть в активном плане."
-
-            await message.answer(
-                f"{prefix}\n\n"
-                f"План дня:\n\n{plan_text}{hint}"
-            )
-            return
-
-        if parsed_message.intent == "show_profile":
-            profile_text = format_user_profile(user)
-            await message.answer(f"Твой профиль:\n\n{profile_text}")
-            return
-
-        if parsed_message.intent == "update_profile":
-            user = update_user_profile_from_parsed_message(
-                db=db,
-                user=user,
-                parsed_message=parsed_message,
-            )
-
-            profile_text = format_user_profile(user)
-
-            await message.answer(
-                "Запомнил настройки профиля:\n\n"
-                f"{profile_text}\n\n"
-                "Теперь буду учитывать это при планировании."
-            )
-            return
-
-        if parsed_message.intent == "show_plan":
-            day_plan = rebuild_day_plan(
-                db=db,
-                user=user,
-                parsed_message=parsed_message,
-            )
-            plan_text = format_day_plan(day_plan)
-            hint = _planning_context_hint(user)
-
-            await message.answer(f"Текущий план дня:\n\n{plan_text}{hint}")
-            return
-
-        if parsed_message.intent == "show_tasks":
-            tasks = list_active_tasks(db=db, user=user)
-            tasks_text = format_tasks(tasks)
-
-            await message.answer(f"Активные задачи:\n\n{tasks_text}")
-            return
-
-        if parsed_message.intent == "clear_tasks":
-            count = clear_user_tasks(db=db, user=user)
-            rebuild_today_plan(db=db, user=user)
-
-            await message.answer(f"Очистил задачи: {count}.\n\nПлан дня очищен.")
-            return
-
-        if parsed_message.intent == "daily_summary":
-            summary_date = get_plan_date(parsed_message)
-            done_tasks = mark_tasks_done_by_titles(
-                db=db,
-                user=user,
-                titles=parsed_message.done_task_titles,
-                target_date=summary_date,
-            )
-
-            skipped_tasks = find_active_tasks_by_titles(
-                db=db,
-                user=user,
-                titles=parsed_message.skipped_task_titles,
-                target_date=summary_date,
-            )
-
-            day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-            plan_text = format_day_plan(day_plan)
-            hint = _planning_context_hint(user)
-
-            done_text = "\n".join(f"— {task.title}" for task in done_tasks) or "ничего не отметил"
-            skipped_text = "\n".join(f"— {task.title}" for task in skipped_tasks) or "нет"
-
-            await message.answer(
-                "Итог дня принял.\n\n"
-                f"Выполнено:\n{done_text}\n\n"
-                f"Осталось активным:\n{skipped_text}\n\n"
-                f"Обновленный план:\n\n{plan_text}{hint}"
-            )
-            return
-
-        if parsed_message.intent == "mark_done":
-            if not parsed_message.done_task_title:
-                await message.answer("Не понял, какую задачу отметить выполненной.")
-                return
-
-            task_date = get_plan_date(parsed_message)
-            task = mark_task_done_by_title(
-                db=db,
-                user=user,
-                title=parsed_message.done_task_title,
-                target_date=task_date,
-            )
-
-            if task is None:
-                await message.answer(
-                    "Не нашел такую активную задачу.\n\n"
-                    "Напиши «покажи задачи», чтобы посмотреть список."
-                )
-                return
-
-            day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-            plan_text = format_day_plan(day_plan)
-            hint = _planning_context_hint(user)
-
-            await message.answer(
-                f"Отметил выполненной:\n\n{task.title}\n\n"
-                f"Обновленный план:\n\n{plan_text}{hint}"
-            )
-            return
-
-        if parsed_message.intent == "reschedule":
-            day_plan = rebuild_day_plan(
-                db=db,
-                user=user,
-                parsed_message=parsed_message,
-            )
-            plan_text = format_day_plan(day_plan)
-            hint = _planning_context_hint(user)
-
-            await message.answer(
-                "Ок, перепланировал день с учетом изменений:\n\n"
-                f"{plan_text}{hint}"
-            )
-            return
-
-        tasks = create_tasks_from_parsed_message(
-            db=db,
-            user=user,
-            parsed_message=parsed_message,
-        )
-
-        day_plan = rebuild_day_plan(
-            db=db,
-            user=user,
-            parsed_message=parsed_message,
-        )
-
-        plan_text = format_day_plan(day_plan)
-        hint = _planning_context_hint(user)
-
-    if tasks:
-        task_lines = "\n".join(
-            f"— {task.title}"
-            for task in tasks
-        )
-    else:
-        task_lines = "Новых задач нет."
-
-    await message.answer(
-        "Принял. Добавил задачи:\n\n"
-        f"{task_lines}\n\n"
-        "План дня:\n\n"
-        f"{plan_text}{hint}"
-    )
+    await message.answer(response.reply_text)
 
 
 async def main() -> None:
