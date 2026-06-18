@@ -141,3 +141,34 @@ Expected:
 
 - Bot stores all goals.
 - Goal-task suggestions remain useful and do not assume a single user's gym, English, or AI project context.
+
+## 11. Today Web UI
+
+Setup:
+
+```bash
+uvicorn app.main:app --reload
+cd web
+npm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+Input:
+
+```text
+Сегодня мало сил, надо оплатить счета и 40 минут поделать проект
+```
+
+Expected:
+
+- The Web UI sends the text to `POST /api/message` with `source=web_text`.
+- The AI response block shows the backend `reply_text` and intent.
+- Today plan refreshes from `GET /api/plan/{user_external_id}?date=today`.
+- Tasks refresh from `GET /api/tasks/{user_external_id}`.
+- Goals refresh from `GET /api/goals/{user_external_id}`.
+- Changing `User ID` switches the temporary local MVP identity stored in `localStorage`.

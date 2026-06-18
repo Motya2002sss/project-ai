@@ -22,8 +22,10 @@ Current ignore rules must include:
 - `.env.*`
 - `!.env.example`
 - `.venv/`
+- `node_modules/`
 - `__pycache__/`
 - `.pytest_cache/`
+- frontend build outputs such as `dist/` and `build/`
 - local database files such as `*.db`, `*.sqlite`, `*.sqlite3`
 - logs such as `*.log` and `logs/`
 
@@ -82,6 +84,7 @@ For API work:
 - do not return unnecessary internal fields;
 - avoid destructive endpoints without explicit confirmation;
 - do not use production CORS wildcard settings;
+- keep local development CORS restricted to known frontend origins such as `http://localhost:5173` and `http://127.0.0.1:5173`;
 - do not add debug endpoints that reveal env, config, tokens, stack traces, or credentials;
 - keep user-facing errors understandable without exposing internals.
 - keep API endpoints thin and route user requests through services, parser, and planner layers.
@@ -104,6 +107,7 @@ Current MVP rule:
 - Telegram user is resolved through `get_or_create_user()`.
 - Web/API MVP users are resolved through `user_external_id`.
 - `user_external_id` is a local MVP identifier and not production authentication.
+- The Today Web UI stores this temporary identifier in `localStorage`; do not treat it as proof of identity.
 - Task, goal, and plan service queries must include `user_id` filters for user-owned data.
 - Production Web API must introduce an explicit auth strategy before exposing user data beyond local development.
 

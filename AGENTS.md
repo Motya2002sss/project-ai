@@ -27,6 +27,7 @@ The repository already contains a working MVP foundation:
 - Alembic migrations;
 - Telegram bot through aiogram;
 - minimal FastAPI Web API foundation;
+- minimal Today Web UI in `web/`;
 - mock natural-language parser;
 - optional OpenAI/openai-compatible/Ollama parser integration with mock fallback;
 - shared message processing service for Telegram text, Web text, and future voice transcripts;

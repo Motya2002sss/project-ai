@@ -1,6 +1,6 @@
 # AI Life Planner
 
-AI Life Planner is a Telegram-first MVP for an AI daily and life planner.
+AI Life Planner is a Telegram-first MVP for an AI daily and life planner, with a minimal Today Web UI for local product testing.
 
 The product is not a plain todo list and not a command-only Telegram bot. The user writes normal human text about their schedule, energy, goals, tasks, and day results. The system turns that text into persistent profile data, long-term goals, dated tasks, a realistic day plan, and daily progress.
 
@@ -26,6 +26,7 @@ Implemented:
 - automatic fallback to mock parser when LLM is unavailable or invalid;
 - shared message processing service for Telegram text, Web text, and future voice transcripts;
 - minimal FastAPI Web API foundation;
+- minimal Today Web UI in `web/`;
 - user profile storage;
 - long-term goals;
 - tasks;
@@ -45,12 +46,12 @@ Implemented:
 Not ready yet:
 
 - production-quality LLM evaluation and prompt tuning;
-- Web UI;
+- full multi-screen Web UI;
 - production authentication;
 - production deployment;
 - full production Web API surface for all future Web UI workflows.
 
-FastAPI currently provides `/health` and a minimal `/api` foundation for future Web UI work. The primary MVP interface is still Telegram, and both Telegram and API flows should converge on the same parser, service, and planner layers.
+FastAPI currently provides `/health` and a minimal `/api` foundation used by the Today Web UI. The primary MVP interface is still Telegram, and both Telegram and API flows converge on the same parser, service, and planner layers.
 
 ## Project Structure
 
@@ -72,6 +73,7 @@ ai-life-planner/
 ├── scripts/
 │   └── check_mvp.py
 ├── tests/
+├── web/                  # minimal Vite/React Today screen
 ├── docker-compose.yml
 ├── requirements.txt
 ├── .env.example
@@ -276,7 +278,7 @@ Expected response:
 
 ### 6. Use The Web API Foundation
 
-The MVP API is intentionally small. It prepares the backend for a future Web UI and for future voice input without adding a frontend or production auth yet.
+The MVP API is intentionally small. It powers the local Today Web UI and prepares the backend for future voice input without adding production auth yet.
 
 Supported input sources:
 
@@ -289,7 +291,7 @@ telegram_voice_transcript
 Future voice flow should be:
 
 ```text
-voice/audio -> speech-to-text -> text -> process_user_message -> parser -> services -> planner
+voice/audio -> speech-to-text -> text -> /api/message -> process_user_message -> parser -> services -> planner
 ```
 
 Message endpoint:
@@ -316,7 +318,48 @@ GET /api/plan/{user_external_id}?date=tomorrow
 
 `user_external_id` is a temporary MVP identifier for local/API experiments. It is not production authentication and must not be treated as a secure user identity in public deployments.
 
-### 7. Run Telegram Bot
+FastAPI allows local CORS only for Vite dev origins:
+
+```text
+http://localhost:5173
+http://127.0.0.1:5173
+```
+
+### 7. Run The Today Web UI
+
+The first Web UI is a minimal Today screen. It lets you type free text, sends it to `POST /api/message` with `source=web_text`, and refreshes today's plan, tasks, and goals from the existing API endpoints.
+
+Start the backend first:
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Then run the frontend:
+
+```bash
+cd web
+npm install
+npm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:5173
+```
+
+Optional API override:
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8000 npm run dev
+```
+
+The Web UI stores `User ID` in `localStorage` and defaults to `web-demo-user`. This is a temporary local MVP identity, not production authentication.
+
+Production auth, payments, deployment, a full calendar, and a full multi-screen Web UI are not implemented.
+
+### 8. Run Telegram Bot
 
 Set `TELEGRAM_BOT_TOKEN` in `.env`, then run:
 
@@ -375,6 +418,13 @@ Run tests when available:
 
 ```bash
 pytest
+```
+
+Build the Web UI:
+
+```bash
+cd web
+npm run build
 ```
 
 ## Documentation

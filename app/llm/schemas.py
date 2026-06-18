@@ -30,7 +30,7 @@ def _empty_to_none(value):
     if isinstance(value, str):
         value = value.strip()
 
-        if value == "":
+        if value == "" or value.lower() in {"null", "none"}:
             return None
 
     return value

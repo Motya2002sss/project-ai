@@ -52,6 +52,7 @@ The backend owns state and planning rules. The parser or optional LLM extracts m
    - Web text and Telegram text should enter the same message processing pipeline.
    - Future voice/audio input should become speech-to-text first, then use the same text parser and backend services.
    - The API returns structured responses that a future Web UI can render without duplicating planning logic.
+   - The initial Web UI is a minimal Today screen for local product testing: free-text input, AI response, today plan, tasks, goals, and temporary User ID.
 
 ## MVP Status
 
@@ -65,6 +66,7 @@ The current MVP supports:
 - Task creation from natural language through the mock parser.
 - Shared message processing service for Telegram text, Web text, and future voice transcript inputs.
 - API endpoints for message processing, profile, goals, tasks, and today/tomorrow plan reads.
+- Minimal Vite/React Today Web UI in `web/`.
 - Optional OpenAI/openai-compatible/native Ollama parser integration with mock fallback.
 - Parser evaluation cases for comparing mock, local, and hosted provider behavior.
 - Task `target_date` for today/tomorrow separation.
@@ -76,7 +78,7 @@ The current MVP supports:
 ## Next
 
 1. Improve LLM parsing quality with eval scenarios, provider comparisons, stricter prompts, and production monitoring.
-2. Expand the Web API only where the future Web UI needs additional workflow coverage.
+2. Expand the Today Web UI only where product workflows need it, without turning it into a heavy task manager.
 3. Add production authentication before exposing the Web API outside local development.
-4. Build a Web UI on top of the same services after backend and Telegram MVP remain stable.
+4. Expand the Web API only where the future Web UI needs additional workflow coverage.
 5. Improve planning quality with better scheduling rules, conflict handling, and goal progress history.

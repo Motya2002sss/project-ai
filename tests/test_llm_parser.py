@@ -269,6 +269,30 @@ def test_llm_content_normalizes_null_lists_before_validation():
     assert parsed.skipped_task_titles == []
 
 
+def test_llm_content_normalizes_string_null_values_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "date": "null",
+                "energy_level": "none",
+                "tasks": "null",
+                "goals": "null",
+                "done_task_titles": "null",
+                "skipped_task_titles": "none",
+            }
+        ),
+        text="Нужно купить продукты",
+    )
+
+    assert parsed.date is None
+    assert parsed.energy_level is None
+    assert parsed.tasks == []
+    assert parsed.goals == []
+    assert parsed.done_task_titles == []
+    assert parsed.skipped_task_titles == []
+
+
 def test_llm_content_normalizes_null_task_priority_before_validation():
     parsed = parser._parse_llm_content(
         json.dumps(
@@ -278,6 +302,26 @@ def test_llm_content_normalizes_null_task_priority_before_validation():
                     {
                         "title": "разобрать документы",
                         "priority": None,
+                        "estimated_minutes": 30,
+                    }
+                ],
+            }
+        ),
+        text="Сегодня хочу разобрать документы",
+    )
+
+    assert parsed.tasks[0].priority == "medium"
+
+
+def test_llm_content_normalizes_string_null_task_priority_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "разобрать документы",
+                        "priority": "null",
                         "estimated_minutes": 30,
                     }
                 ],

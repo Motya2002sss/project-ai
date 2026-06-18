@@ -681,18 +681,39 @@ def _normalize_llm_time(value):
     return value
 
 
+def _normalize_empty_llm_value(value):
+    if isinstance(value, str) and value.strip().lower() in {"", "null", "none"}:
+        return None
+
+    return value
+
+
 def _normalize_llm_data(data):
     if not isinstance(data, dict):
         return data
 
     normalized = dict(data)
 
+    for field in [
+        "date",
+        "work_start",
+        "work_until",
+        "sleep_time",
+        "energy_level",
+        "done_task_title",
+        "budget_limit",
+    ]:
+        if field in normalized:
+            normalized[field] = _normalize_empty_llm_value(normalized[field])
+
     for field in ["work_start", "work_until", "sleep_time"]:
         if field in normalized:
             normalized[field] = _normalize_llm_time(normalized[field])
 
     for field in ["tasks", "goals", "done_task_titles", "skipped_task_titles"]:
-        if normalized.get(field) is None:
+        normalized[field] = _normalize_empty_llm_value(normalized.get(field))
+
+        if normalized[field] is None:
             normalized[field] = []
 
     return normalized
