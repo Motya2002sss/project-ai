@@ -304,57 +304,28 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="today-header">
-        <div>
+        <div className="today-intro">
           <p className="date-line">{todayText}</p>
           <h1>Сегодня</h1>
+          <p className="focus-line">Спокойно соберём день по шагам.</p>
         </div>
-        <div className="progress-summary" aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}>
-          <strong>Сделано {doneToday.length} из {todayTasks.length}</strong>
+        <div
+          className="progress-summary"
+          aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
+        >
+          <span>Сделано {doneToday.length} из {todayTasks.length}</span>
           <span className="progress-track" aria-hidden="true">
             <span style={{ width: `${progressPercent}%` }} />
           </span>
         </div>
       </header>
 
-      <section className="input-surface">
-        <form onSubmit={handleSubmit}>
-          <label htmlFor="mind-input">Что у тебя в голове?</label>
-          <textarea
-            id="mind-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Например: сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
-            rows={3}
-          />
-          <div className="input-actions">
-            <span className={`service-status service-status-${backendStatus}`}>
-              {backendStatus === "ready"
-                ? "Сервис доступен"
-                : backendStatus === "error"
-                  ? "Сервис недоступен"
-                  : "Проверяю сервис"}
-            </span>
-            <button type="submit" disabled={submitStatus === "loading" || !draft.trim()}>
-              {submitStatus === "loading" ? "Разбираю..." : "Разобрать"}
-            </button>
-          </div>
-        </form>
-      </section>
-
       {error && <p className="error-line">{error}</p>}
-
-      {lastResponse && (
-        <section className="assistant-note" aria-live="polite">
-          <p className="assistant-label">AI Life Planner</p>
-          <p>{responseSummary(lastResponse.reply_text)}</p>
-          <ChangeSummary response={lastResponse} />
-        </section>
-      )}
 
       <section className="today-plan" aria-labelledby="today-plan-title">
         <div className="section-heading">
           <div>
-            <p className="section-kicker">Главное на день</p>
+            <p className="section-kicker">Вот твой день</p>
             <h2 id="today-plan-title">План на сегодня</h2>
           </div>
           {plan?.energy_level && <span>{energyLabel(plan.energy_level)}</span>}
@@ -395,6 +366,38 @@ export default function App() {
           <EmptyState text="На сегодня пока ничего не запланировано" />
         )}
       </section>
+
+      <section className="input-surface" aria-labelledby="mind-input-title">
+        <form onSubmit={handleSubmit}>
+          <div className="input-heading">
+            <label id="mind-input-title" htmlFor="mind-input">
+              Что у тебя в голове?
+            </label>
+            <p>Я превращу это в реалистичный план дня.</p>
+          </div>
+          <textarea
+            id="mind-input"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            placeholder="Например: сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
+            rows={3}
+          />
+          <div className="input-actions">
+            <span className="input-hint">Можно писать обычным текстом</span>
+            <button type="submit" disabled={submitStatus === "loading" || !draft.trim()}>
+              {submitStatus === "loading" ? "Разбираю..." : "Разобрать"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      {lastResponse && (
+        <section className="assistant-note" aria-live="polite">
+          <p className="assistant-label">Небольшое резюме</p>
+          <p>{responseSummary(lastResponse.reply_text)}</p>
+          <ChangeSummary response={lastResponse} />
+        </section>
+      )}
 
       {laterTasks.length > 0 && (
         <section className="secondary-section" aria-labelledby="later-title">
@@ -448,6 +451,14 @@ export default function App() {
             autoComplete="off"
           />
           <p>Временная dev-идентификация, не production auth.</p>
+          <p>
+            Backend:{" "}
+            {backendStatus === "ready"
+              ? "доступен"
+              : backendStatus === "error"
+                ? "недоступен"
+                : "проверяется"}
+          </p>
           {lastResponse && <p>Распознано: {lastResponse.intent}</p>}
         </div>
       </details>
