@@ -170,7 +170,6 @@ export default function App() {
     [tasks, todayValue]
   );
   const doneToday = todayTasks.filter((task) => task.status === "done");
-  const activeToday = todayTasks.filter((task) => task.status !== "done");
   const taskById = new Map(tasks.map((task) => [task.id, task]));
   const scheduledItems = (plan?.items || []).filter((item) => item.status === "planned");
   const scheduledTaskIds = new Set(
@@ -304,20 +303,9 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="today-header">
-        <div className="today-intro">
-          <p className="date-line">{todayText}</p>
-          <h1>Сегодня</h1>
-          <p className="focus-line">Спокойно соберём день по шагам.</p>
-        </div>
-        <div
-          className="progress-summary"
-          aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
-        >
-          <span>Сделано {doneToday.length} из {todayTasks.length}</span>
-          <span className="progress-track" aria-hidden="true">
-            <span style={{ width: `${progressPercent}%` }} />
-          </span>
-        </div>
+        <p className="date-line">{todayText}</p>
+        <h1>Сегодня</h1>
+        <p className="focus-line">Спокойно соберём день по шагам.</p>
       </header>
 
       {error && <p className="error-line">{error}</p>}
@@ -328,8 +316,17 @@ export default function App() {
             <p className="section-kicker">Вот твой день</p>
             <h2 id="today-plan-title">План на сегодня</h2>
           </div>
-          {plan?.energy_level && <span>{energyLabel(plan.energy_level)}</span>}
+          <div
+            className="plan-progress"
+            aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
+          >
+            <span>Сделано {doneToday.length} из {todayTasks.length}</span>
+            <span className="progress-track" aria-hidden="true">
+              <span style={{ width: `${progressPercent}%` }} />
+            </span>
+          </div>
         </div>
+        {plan?.energy_level && <p className="energy-line">{energyLabel(plan.energy_level)}</p>}
 
         {dataStatus === "loading" ? (
           <EmptyState text="Собираю план дня..." />
@@ -385,7 +382,7 @@ export default function App() {
           <div className="input-actions">
             <span className="input-hint">Можно писать обычным текстом</span>
             <button type="submit" disabled={submitStatus === "loading" || !draft.trim()}>
-              {submitStatus === "loading" ? "Разбираю..." : "Разобрать"}
+              {submitStatus === "loading" ? "Собираю..." : "Собрать день"}
             </button>
           </div>
         </form>
@@ -419,12 +416,12 @@ export default function App() {
         </section>
       )}
 
-      <section className="goals-section" aria-labelledby="goals-title">
-        <div className="section-heading compact-heading">
-          <h2 id="goals-title">Цели</h2>
-          {goals.length > 0 && <span>{goals.length}</span>}
-        </div>
-        {goals.length ? (
+      {goals.length > 0 && (
+        <section className="goals-section" aria-labelledby="goals-title">
+          <div className="section-heading compact-heading">
+            <h2 id="goals-title">Цели</h2>
+            <span>{goals.length}</span>
+          </div>
           <ul className="goal-list">
             {goals.map((goal) => (
               <li key={goal.id}>
@@ -433,10 +430,8 @@ export default function App() {
               </li>
             ))}
           </ul>
-        ) : (
-          <EmptyState text="Целей пока нет" />
-        )}
-      </section>
+        </section>
+      )}
 
       <details className="developer-settings">
         <summary>Локальные настройки</summary>

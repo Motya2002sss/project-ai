@@ -52,56 +52,46 @@ button:disabled {
 }
 
 .app-shell {
-  width: min(660px, calc(100% - 32px));
+  width: min(500px, calc(100% - 28px));
   margin: 0 auto;
-  padding: 54px 0 64px;
+  padding: 50px 0 64px;
 }
 
 .today-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 32px;
-  margin-bottom: 40px;
-}
-
-.today-intro {
-  min-width: 0;
+  margin-bottom: 38px;
 }
 
 .today-header h1 {
   margin: 0;
-  font-size: 44px;
-  line-height: 1;
+  font-size: 48px;
+  line-height: 0.98;
   font-weight: 700;
   letter-spacing: 0;
 }
 
 .date-line {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   color: #8b8174;
-  font-size: 14px;
+  font-size: 13px;
   text-transform: capitalize;
 }
 
 .focus-line {
-  margin: 13px 0 0;
+  margin: 16px 0 0;
   color: #7e756a;
   font-size: 15px;
   line-height: 1.5;
 }
 
-.progress-summary {
+.plan-progress {
   display: grid;
   flex: 0 0 auto;
-  width: 170px;
-  gap: 8px;
-  border-radius: 8px;
-  padding: 11px 13px;
+  width: 142px;
+  gap: 7px;
   color: #5f6d5b;
-  background: #eaf1e7;
-  font-size: 13px;
-  font-weight: 650;
+  font-size: 12px;
+  font-weight: 640;
+  text-align: right;
 }
 
 .progress-track {
@@ -131,7 +121,7 @@ button:disabled {
 }
 
 .today-plan {
-  margin-bottom: 38px;
+  margin-bottom: 36px;
 }
 
 .section-heading {
@@ -149,17 +139,18 @@ button:disabled {
   letter-spacing: 0;
 }
 
-.section-heading > span {
-  color: #8b8174;
-  font-size: 13px;
-}
-
 .section-kicker {
   margin: 0 0 6px;
   color: #8fae8b;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
+}
+
+.energy-line {
+  margin: -7px 0 15px;
+  color: #8b8174;
+  font-size: 12px;
 }
 
 .today-task-list,
@@ -171,36 +162,70 @@ button:disabled {
 }
 
 .today-task-list {
-  overflow: hidden;
-  border-radius: 8px;
-  background: #ffffff;
-  box-shadow: 0 18px 45px rgba(62, 45, 27, 0.06);
+  display: grid;
+  gap: 10px;
 }
 
 .task-row {
-  border-bottom: 1px solid #eee7de;
-}
-
-.task-row:last-child {
-  border-bottom: 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 14px 34px rgba(62, 45, 27, 0.055);
 }
 
 .task-row label {
   display: flex;
   align-items: center;
   gap: 15px;
-  min-height: 76px;
-  padding: 15px 19px;
+  min-height: 80px;
+  padding: 17px 19px;
   cursor: pointer;
 }
 
 .task-row input[type="checkbox"] {
+  appearance: none;
   flex: 0 0 auto;
-  width: 23px;
-  height: 23px;
+  display: grid;
+  width: 25px;
+  height: 25px;
   margin: 0;
-  accent-color: #8fae8b;
+  place-content: center;
+  border: 1.5px solid #c8bfb4;
+  border-radius: 8px;
+  background: #fffdfa;
   cursor: pointer;
+  transition:
+    border-color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.task-row input[type="checkbox"]::before {
+  width: 11px;
+  height: 6px;
+  border-bottom: 2px solid #ffffff;
+  border-left: 2px solid #ffffff;
+  content: "";
+  opacity: 0;
+  transform: translateY(-1px) rotate(-45deg) scale(0.7);
+  transition:
+    opacity 150ms ease,
+    transform 150ms ease;
+}
+
+.task-row input[type="checkbox"]:checked {
+  border-color: #8fae8b;
+  background: #8fae8b;
+}
+
+.task-row input[type="checkbox"]:checked::before {
+  opacity: 1;
+  transform: translateY(-1px) rotate(-45deg) scale(1);
+}
+
+.task-row input[type="checkbox"]:hover:not(:disabled) {
+  border-color: #8fae8b;
+  transform: scale(1.04);
 }
 
 .task-row input[type="checkbox"]:disabled {
@@ -229,12 +254,14 @@ button:disabled {
 }
 
 .task-row-done {
-  background: #fbfaf7;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow: none;
 }
 
 .task-row-done .task-copy strong {
   color: #a29a91;
   text-decoration: line-through;
+  text-decoration-thickness: 1px;
 }
 
 .task-row-done .task-meta {
@@ -252,11 +279,22 @@ button:disabled {
 }
 
 .input-surface {
-  margin-bottom: 22px;
-  border: 1px solid #e8ded2;
+  position: relative;
+  overflow: hidden;
+  margin-bottom: 24px;
+  border: 0;
   border-radius: 8px;
-  padding: 22px;
+  padding: 24px;
   background: #fbf8f2;
+  box-shadow: 0 18px 45px rgba(62, 45, 27, 0.06);
+}
+
+.input-surface::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: #8fae8b;
+  content: "";
 }
 
 .input-surface form {
@@ -270,7 +308,7 @@ button:disabled {
 }
 
 .input-heading label {
-  font-size: 19px;
+  font-size: 20px;
   font-weight: 680;
 }
 
@@ -282,14 +320,14 @@ button:disabled {
 
 textarea {
   width: 100%;
-  min-height: 94px;
+  min-height: 104px;
   max-height: 210px;
   resize: vertical;
-  border: 1px solid transparent;
+  border: 1px solid #eee7de;
   border-radius: 8px;
   padding: 14px 15px;
   color: #2f2a25;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.82);
   outline: none;
   line-height: 1.5;
 }
@@ -361,13 +399,21 @@ textarea:focus,
   font-size: 17px;
 }
 
+.compact-heading > span {
+  color: #9a9084;
+  font-size: 12px;
+}
+
 .task-row-compact label {
   min-height: 58px;
   padding: 11px 2px;
 }
 
 .later-task-list .task-row {
-  border-bottom-color: #e8ded2;
+  border-radius: 0;
+  border-bottom: 1px solid #e8ded2;
+  background: transparent;
+  box-shadow: none;
 }
 
 .later-task-list .task-copy strong {
@@ -401,11 +447,6 @@ textarea:focus,
 .goal-list small {
   color: #9a9084;
   white-space: nowrap;
-}
-
-.goals-section .empty-state {
-  padding: 18px 19px;
-  box-shadow: none;
 }
 
 .developer-settings {
@@ -447,33 +488,33 @@ textarea:focus,
 
 @media (max-width: 640px) {
   .app-shell {
-    width: min(100% - 24px, 560px);
+    width: min(100% - 24px, 500px);
     padding-top: 30px;
   }
 
-  .today-header {
+  .today-header h1 {
+    font-size: 42px;
+  }
+
+  .section-heading {
+    align-items: flex-end;
+    flex-direction: row;
+    gap: 16px;
+  }
+
+  .today-plan > .section-heading {
     align-items: flex-start;
     flex-direction: column;
-    gap: 20px;
-    margin-bottom: 34px;
-  }
-
-  .today-header h1 {
-    font-size: 38px;
-  }
-
-  .progress-summary {
-    width: 100%;
+    gap: 12px;
   }
 
   .today-plan {
     margin-bottom: 32px;
   }
 
-  .section-heading {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 8px;
+  .plan-progress {
+    width: 100%;
+    text-align: left;
   }
 
   .compact-heading {
@@ -482,12 +523,12 @@ textarea:focus,
   }
 
   .task-row label {
-    min-height: 70px;
-    padding: 14px 15px;
+    min-height: 76px;
+    padding: 16px;
   }
 
   .input-surface {
-    padding: 18px;
+    padding: 21px 19px 20px;
   }
 
   .input-actions {
