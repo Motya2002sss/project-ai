@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
 
 type MessageSource = "web_text";
 
@@ -17,15 +17,6 @@ type Goal = {
   category: string;
   priority: string;
   status: string;
-};
-
-type Profile = {
-  user_external_id: string;
-  name: string | null;
-  timezone: string;
-  work_start_time: string | null;
-  work_end_time: string | null;
-  sleep_time: string | null;
 };
 
 type PlanItem = {
@@ -57,7 +48,6 @@ type MessageResponse = {
   summary: string | null;
   affected_tasks: Task[];
   affected_goals: Goal[];
-  profile: Profile | null;
   plan_summary: Plan | null;
 };
 
@@ -65,6 +55,15 @@ type LoadState = "idle" | "loading" | "ready" | "error";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 const USER_ID_STORAGE_KEY = "ai-life-planner-user-id";
+
+function localDateValue(): string {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, "0");
+  const day = String(today.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
 
 function formatToday(): string {
   return new Intl.DateTimeFormat("ru-RU", {
@@ -74,39 +73,63 @@ function formatToday(): string {
   }).format(new Date());
 }
 
-function formatTime(value: string | null): string {
-  return value ? value.slice(0, 5) : "не указано";
+function formatTime(value: string | null): string | null {
+  return value ? value.slice(0, 5) : null;
 }
 
-function formatDate(value: string): string {
+function formatTaskDate(value: string): string {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  if (value === localDateValue()) {
+    return "Сегодня";
+  }
+
+  const tomorrowValue = [
+    tomorrow.getFullYear(),
+    String(tomorrow.getMonth() + 1).padStart(2, "0"),
+    String(tomorrow.getDate()).padStart(2, "0")
+  ].join("-");
+
+  if (value === tomorrowValue) {
+    return "Завтра";
+  }
+
   return new Intl.DateTimeFormat("ru-RU", {
     day: "numeric",
     month: "short"
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function formatDuration(minutes: number | null): string | null {
+  if (!minutes) {
+    return null;
+  }
+
+  if (minutes < 60) {
+    return `${minutes} мин`;
+  }
+
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return `${hours} ч`;
+  }
+
+  return `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
+}
+
 function priorityLabel(priority: string): string {
   const labels: Record<string, string> = {
-    high: "важно",
-    medium: "средне",
-    low: "низко"
+    high: "важная",
+    medium: "обычная",
+    low: "низкий приоритет"
   };
 
   return labels[priority] || priority;
 }
 
-function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    active: "активна",
-    done: "готово",
-    draft: "черновик",
-    overloaded: "перегружено",
-    planned: "в плане",
-    scheduled: "в плане",
-    not_scheduled: "не влезло"
-  };
-
-  return labels[status] || status;
+function responseSummary(replyText: string): string {
+  return replyText.split("\n\nПлан дня:")[0].trim();
 }
 
 async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
@@ -119,54 +142,67 @@ async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw new Error(`Сервис ответил с ошибкой ${response.status}`);
   }
 
   return response.json() as Promise<T>;
 }
 
 export default function App() {
-  const [userId, setUserId] = useState(() => {
-    return localStorage.getItem(USER_ID_STORAGE_KEY) || "web-demo-user";
-  });
+  const initialUserId = localStorage.getItem(USER_ID_STORAGE_KEY) || "web-demo-user";
+  const [userId, setUserId] = useState(initialUserId);
+  const [userIdDraft, setUserIdDraft] = useState(initialUserId);
   const [draft, setDraft] = useState("");
   const [backendStatus, setBackendStatus] = useState<LoadState>("idle");
   const [dataStatus, setDataStatus] = useState<LoadState>("idle");
   const [submitStatus, setSubmitStatus] = useState<LoadState>("idle");
+  const [completingTaskIds, setCompletingTaskIds] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
-  const [profile, setProfile] = useState<Profile | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [lastResponse, setLastResponse] = useState<MessageResponse | null>(null);
 
   const todayText = useMemo(() => formatToday(), []);
-  const trimmedUserId = userId.trim() || "web-demo-user";
+  const todayValue = useMemo(() => localDateValue(), []);
+  const todayTasks = useMemo(
+    () => tasks.filter((task) => task.target_date === todayValue),
+    [tasks, todayValue]
+  );
+  const doneToday = todayTasks.filter((task) => task.status === "done");
+  const activeToday = todayTasks.filter((task) => task.status !== "done");
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const scheduledItems = (plan?.items || []).filter((item) => item.status === "planned");
+  const scheduledTaskIds = new Set(
+    scheduledItems.flatMap((item) => (item.task_id === null ? [] : [item.task_id]))
+  );
+  const laterTasks = tasks.filter(
+    (task) =>
+      task.status !== "done" &&
+      (task.target_date !== todayValue || !scheduledTaskIds.has(task.id))
+  );
+  const progressPercent = todayTasks.length
+    ? Math.round((doneToday.length / todayTasks.length) * 100)
+    : 0;
 
-  useEffect(() => {
-    localStorage.setItem(USER_ID_STORAGE_KEY, trimmedUserId);
-  }, [trimmedUserId]);
-
-  async function refreshData(nextUserId = trimmedUserId) {
+  async function refreshData(nextUserId = userId) {
     setDataStatus("loading");
     setError(null);
 
     try {
-      const [profileData, planData, taskData, goalData] = await Promise.all([
-        requestJson<Profile>(`/api/profile/${encodeURIComponent(nextUserId)}`),
+      const [planData, taskData, goalData] = await Promise.all([
         requestJson<Plan>(`/api/plan/${encodeURIComponent(nextUserId)}?date=today`),
         requestJson<Task[]>(`/api/tasks/${encodeURIComponent(nextUserId)}`),
         requestJson<Goal[]>(`/api/goals/${encodeURIComponent(nextUserId)}`)
       ]);
 
-      setProfile(profileData);
       setPlan(planData);
       setTasks(taskData);
       setGoals(goalData);
       setDataStatus("ready");
     } catch (refreshError) {
       setDataStatus("error");
-      setError(refreshError instanceof Error ? refreshError.message : "Не удалось загрузить данные");
+      setError(refreshError instanceof Error ? refreshError.message : "Не удалось загрузить день");
     }
   }
 
@@ -186,10 +222,25 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    refreshData();
+    localStorage.setItem(USER_ID_STORAGE_KEY, userId);
+    refreshData(userId);
     // refreshData is intentionally called when the persisted user identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trimmedUserId]);
+  }, [userId]);
+
+  function applyUserId() {
+    const normalizedUserId = userIdDraft.trim() || "web-demo-user";
+    setUserIdDraft(normalizedUserId);
+    setUserId(normalizedUserId);
+    setLastResponse(null);
+  }
+
+  function handleUserIdKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+      applyUserId();
+    }
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -207,7 +258,7 @@ export default function App() {
       const response = await requestJson<MessageResponse>("/api/message", {
         method: "POST",
         body: JSON.stringify({
-          user_external_id: trimmedUserId,
+          user_external_id: userId,
           source: "web_text",
           text
         })
@@ -215,7 +266,7 @@ export default function App() {
 
       setLastResponse(response);
       setDraft("");
-      await refreshData(trimmedUserId);
+      await refreshData(userId);
       setSubmitStatus("ready");
     } catch (submitError) {
       setSubmitStatus("error");
@@ -223,44 +274,65 @@ export default function App() {
     }
   }
 
+  async function handleTaskDone(task: Task) {
+    if (task.status === "done" || completingTaskIds.has(task.id)) {
+      return;
+    }
+
+    setCompletingTaskIds((current) => new Set(current).add(task.id));
+    setError(null);
+
+    try {
+      await requestJson<Task>(`/api/tasks/${task.id}/done`, {
+        method: "POST",
+        body: JSON.stringify({ user_external_id: userId })
+      });
+      await refreshData(userId);
+    } catch (completeError) {
+      setError(
+        completeError instanceof Error ? completeError.message : "Не удалось отметить задачу"
+      );
+    } finally {
+      setCompletingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
+      });
+    }
+  }
+
   return (
     <main className="app-shell">
-      <header className="topbar">
+      <header className="today-header">
         <div>
-          <p className="eyebrow">{todayText}</p>
-          <h1>Today</h1>
+          <p className="date-line">{todayText}</p>
+          <h1>Сегодня</h1>
         </div>
-        <div className="status-cluster" aria-label="Статус сервиса">
-          <span className={`status-dot status-dot-${backendStatus}`} />
-          <span>{backendStatus === "ready" ? "Backend OK" : "Backend"}</span>
+        <div className="progress-summary" aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}>
+          <strong>Сделано {doneToday.length} из {todayTasks.length}</strong>
+          <span className="progress-track" aria-hidden="true">
+            <span style={{ width: `${progressPercent}%` }} />
+          </span>
         </div>
       </header>
 
-      <section className="identity-row" aria-label="Временный пользователь">
-        <label htmlFor="user-id">User ID</label>
-        <input
-          id="user-id"
-          value={userId}
-          onChange={(event) => setUserId(event.target.value)}
-          onBlur={() => setUserId(trimmedUserId)}
-          autoComplete="off"
-        />
-      </section>
-
-      <section className="input-section">
+      <section className="input-surface">
         <form onSubmit={handleSubmit}>
           <label htmlFor="mind-input">Что у тебя в голове?</label>
           <textarea
             id="mind-input"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
-            rows={5}
+            placeholder="Например: сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
+            rows={3}
           />
           <div className="input-actions">
-            <span className="profile-hint">
-              Работа {formatTime(profile?.work_start_time || null)}–{formatTime(profile?.work_end_time || null)}
-              {" · "}сон {formatTime(profile?.sleep_time || null)}
+            <span className={`service-status service-status-${backendStatus}`}>
+              {backendStatus === "ready"
+                ? "Сервис доступен"
+                : backendStatus === "error"
+                  ? "Сервис недоступен"
+                  : "Проверяю сервис"}
             </span>
             <button type="submit" disabled={submitStatus === "loading" || !draft.trim()}>
               {submitStatus === "loading" ? "Разбираю..." : "Разобрать"}
@@ -271,127 +343,186 @@ export default function App() {
 
       {error && <p className="error-line">{error}</p>}
 
-      <section className="layout-grid">
-        <article className="panel response-panel">
-          <div className="section-heading">
-            <h2>Ответ</h2>
-            {lastResponse && <span>{lastResponse.intent}</span>}
-          </div>
-          {lastResponse ? (
-            <div className="response-body">
-              <p>{lastResponse.reply_text}</p>
-              <ChangeSummary response={lastResponse} />
-            </div>
-          ) : (
-            <EmptyState text="Напиши свободный текст, и здесь появится ответ планировщика." />
-          )}
-        </article>
+      {lastResponse && (
+        <section className="assistant-note" aria-live="polite">
+          <p className="assistant-label">AI Life Planner</p>
+          <p>{responseSummary(lastResponse.reply_text)}</p>
+          <ChangeSummary response={lastResponse} />
+        </section>
+      )}
 
-        <article className="panel plan-panel">
-          <div className="section-heading">
-            <h2>План на сегодня</h2>
-            {plan && <span>{statusLabel(plan.status)}</span>}
+      <section className="today-plan" aria-labelledby="today-plan-title">
+        <div className="section-heading">
+          <div>
+            <p className="section-kicker">Главное на день</p>
+            <h2 id="today-plan-title">План на сегодня</h2>
           </div>
-          {plan?.items.length ? (
-            <ol className="plan-list">
-              {plan.items.map((item) => (
-                <li key={item.id}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <span>{statusLabel(item.status)}</span>
-                  </div>
-                  <time>
-                    {formatTime(item.start_time)} - {formatTime(item.end_time)}
-                  </time>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <EmptyState text={dataStatus === "loading" ? "Загружаю план..." : "План пока пустой."} />
-          )}
-        </article>
+          {plan?.energy_level && <span>{energyLabel(plan.energy_level)}</span>}
+        </div>
 
-        <article className="panel">
-          <div className="section-heading">
-            <h2>Задачи</h2>
-            <span>{tasks.length}</span>
-          </div>
-          {tasks.length ? (
-            <ul className="task-list">
-              {tasks.map((task) => (
-                <li key={task.id}>
-                  <div>
-                    <strong>{task.title}</strong>
-                    <span>{formatDate(task.target_date)}</span>
-                  </div>
-                  <div className="badges">
-                    <span>{statusLabel(task.status)}</span>
-                    <span>{priorityLabel(task.priority)}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyState text={dataStatus === "loading" ? "Загружаю задачи..." : "Активных задач нет."} />
-          )}
-        </article>
+        {dataStatus === "loading" ? (
+          <EmptyState text="Собираю план дня..." />
+        ) : scheduledItems.length || doneToday.length ? (
+          <ul className="today-task-list">
+            {scheduledItems.map((item) => {
+              const task = item.task_id === null ? null : taskById.get(item.task_id);
 
-        <article className="panel">
-          <div className="section-heading">
-            <h2>Цели</h2>
-            <span>{goals.length}</span>
-          </div>
-          {goals.length ? (
-            <ul className="goal-list">
-              {goals.map((goal) => (
-                <li key={goal.id}>
-                  <strong>{goal.title}</strong>
-                  <span>{priorityLabel(goal.priority)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <EmptyState text={dataStatus === "loading" ? "Загружаю цели..." : "Целей пока нет."} />
-          )}
-        </article>
+              if (!task) {
+                return null;
+              }
+
+              return (
+                <TaskRow
+                  key={`planned-${task.id}`}
+                  task={task}
+                  time={formatTime(item.start_time)}
+                  pending={completingTaskIds.has(task.id)}
+                  onDone={handleTaskDone}
+                />
+              );
+            })}
+            {doneToday.map((task) => (
+              <TaskRow
+                key={`done-${task.id}`}
+                task={task}
+                time={null}
+                pending={false}
+                onDone={handleTaskDone}
+              />
+            ))}
+          </ul>
+        ) : (
+          <EmptyState text="На сегодня пока ничего не запланировано" />
+        )}
       </section>
+
+      {laterTasks.length > 0 && (
+        <section className="secondary-section" aria-labelledby="later-title">
+          <div className="section-heading compact-heading">
+            <h2 id="later-title">Позже / без времени</h2>
+          </div>
+          <ul className="later-task-list">
+            {laterTasks.map((task) => (
+              <TaskRow
+                key={`later-${task.id}`}
+                task={task}
+                time={task.target_date === todayValue ? null : formatTaskDate(task.target_date)}
+                pending={completingTaskIds.has(task.id)}
+                onDone={handleTaskDone}
+                compact
+              />
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="goals-section" aria-labelledby="goals-title">
+        <div className="section-heading compact-heading">
+          <h2 id="goals-title">Цели</h2>
+          {goals.length > 0 && <span>{goals.length}</span>}
+        </div>
+        {goals.length ? (
+          <ul className="goal-list">
+            {goals.map((goal) => (
+              <li key={goal.id}>
+                <span>{goal.title}</span>
+                <small>{priorityLabel(goal.priority)}</small>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <EmptyState text="Целей пока нет" />
+        )}
+      </section>
+
+      <details className="developer-settings">
+        <summary>Локальные настройки</summary>
+        <div className="developer-settings-body">
+          <label htmlFor="user-id">User ID</label>
+          <input
+            id="user-id"
+            value={userIdDraft}
+            onChange={(event) => setUserIdDraft(event.target.value)}
+            onBlur={applyUserId}
+            onKeyDown={handleUserIdKeyDown}
+            autoComplete="off"
+          />
+          <p>Временная dev-идентификация, не production auth.</p>
+          {lastResponse && <p>Распознано: {lastResponse.intent}</p>}
+        </div>
+      </details>
     </main>
   );
 }
 
-function ChangeSummary({ response }: { response: MessageResponse }) {
-  const hasChanges = response.affected_tasks.length > 0 || response.affected_goals.length > 0;
+function TaskRow({
+  task,
+  time,
+  pending,
+  onDone,
+  compact = false
+}: {
+  task: Task;
+  time: string | null;
+  pending: boolean;
+  onDone: (task: Task) => Promise<void>;
+  compact?: boolean;
+}) {
+  const done = task.status === "done";
+  const duration = formatDuration(task.estimated_minutes);
 
-  if (!hasChanges) {
+  return (
+    <li className={`task-row ${done ? "task-row-done" : ""} ${compact ? "task-row-compact" : ""}`}>
+      <label>
+        <input
+          type="checkbox"
+          checked={done}
+          disabled={done || pending}
+          onChange={() => onDone(task)}
+          aria-label={`Отметить задачу «${task.title}» выполненной`}
+        />
+        <span className="task-copy">
+          <strong>{task.title}</strong>
+          <span className="task-meta">
+            {done ? (
+              "Сделано"
+            ) : (
+              <>
+                {time && <span>{time}</span>}
+                {duration && <span>{duration}</span>}
+                {!time && !duration && <span>Без времени</span>}
+              </>
+            )}
+          </span>
+        </span>
+      </label>
+    </li>
+  );
+}
+
+function ChangeSummary({ response }: { response: MessageResponse }) {
+  const titles = [
+    ...response.affected_tasks.map((task) => task.title),
+    ...response.affected_goals.map((goal) => goal.title)
+  ];
+
+  if (!titles.length) {
     return null;
   }
 
-  return (
-    <div className="changes">
-      {response.affected_tasks.length > 0 && (
-        <div>
-          <span>Задачи</span>
-          <ul>
-            {response.affected_tasks.map((task) => (
-              <li key={task.id}>{task.title}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {response.affected_goals.length > 0 && (
-        <div>
-          <span>Цели</span>
-          <ul>
-            {response.affected_goals.map((goal) => (
-              <li key={goal.id}>{goal.title}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
+  return <p className="change-line">Обновлено: {titles.join(", ")}</p>;
 }
 
 function EmptyState({ text }: { text: string }) {
   return <p className="empty-state">{text}</p>;
+}
+
+function energyLabel(energy: string): string {
+  const labels: Record<string, string> = {
+    low: "Бережный темп",
+    medium: "Обычный темп",
+    high: "Много энергии"
+  };
+
+  return labels[energy] || energy;
 }

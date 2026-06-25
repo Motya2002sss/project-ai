@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -10,6 +10,7 @@ from app.schemas.api import (
     MessageResponse,
     PlanResponse,
     ProfileResponse,
+    TaskDoneRequest,
     TaskResponse,
 )
 from app.services.goal_service import list_active_goals
@@ -21,7 +22,7 @@ from app.services.message_service import (
     task_to_response,
 )
 from app.services.planning_service import rebuild_day_plan
-from app.services.task_service import list_active_tasks
+from app.services.task_service import list_user_tasks, mark_task_done
 from app.services.user_service import get_or_create_user_by_external_id
 
 
@@ -68,9 +69,27 @@ def get_tasks(
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
-    tasks = list_active_tasks(db=db, user=user)
+    tasks = list_user_tasks(db=db, user=user)
 
     return [task_to_response(task) for task in tasks]
+
+
+@router.post("/tasks/{task_id}/done", response_model=TaskResponse)
+def complete_task(
+    task_id: int,
+    request: TaskDoneRequest,
+    db: Session = Depends(get_db),
+) -> TaskResponse:
+    user = get_or_create_user_by_external_id(db=db, external_id=request.user_external_id)
+    task = mark_task_done(db=db, user=user, task_id=task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    return task_to_response(task)
 
 
 @router.get("/plan/{user_external_id}", response_model=PlanResponse)

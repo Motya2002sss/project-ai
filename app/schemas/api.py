@@ -14,6 +14,10 @@ class MessageRequest(BaseModel):
     source: MessageSource = "web_text"
 
 
+class TaskDoneRequest(BaseModel):
+    user_external_id: str = Field(min_length=1, max_length=255)
+
+
 class TaskResponse(BaseModel):
     id: int
     title: str

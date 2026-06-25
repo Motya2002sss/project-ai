@@ -109,6 +109,7 @@ Current MVP rule:
 - `user_external_id` is a local MVP identifier and not production authentication.
 - The Today Web UI stores this temporary identifier in `localStorage`; do not treat it as proof of identity.
 - Task, goal, and plan service queries must include `user_id` filters for user-owned data.
+- Task mutation endpoints must resolve the user first and filter the task by both `task_id` and `user_id`.
 - Production Web API must introduce an explicit auth strategy before exposing user data beyond local development.
 
 ## LLM Safety

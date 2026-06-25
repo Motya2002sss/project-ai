@@ -27,6 +27,7 @@ Implemented:
 - shared message processing service for Telegram text, Web text, and future voice transcripts;
 - minimal FastAPI Web API foundation;
 - minimal Today Web UI in `web/`;
+- Today progress and task completion through Web UI checkboxes;
 - user profile storage;
 - long-term goals;
 - tasks;
@@ -314,9 +315,18 @@ GET /api/goals/{user_external_id}
 GET /api/tasks/{user_external_id}
 GET /api/plan/{user_external_id}?date=today
 GET /api/plan/{user_external_id}?date=tomorrow
+POST /api/tasks/{task_id}/done
 ```
 
 `user_external_id` is a temporary MVP identifier for local/API experiments. It is not production authentication and must not be treated as a secure user identity in public deployments.
+
+The done endpoint accepts the temporary user identity in JSON and uses backend task services for user isolation:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/tasks/1/done \
+  -H "Content-Type: application/json" \
+  -d '{"user_external_id": "web-demo-user"}'
+```
 
 FastAPI allows local CORS only for Vite dev origins:
 
@@ -327,7 +337,7 @@ http://127.0.0.1:5173
 
 ### 7. Run The Today Web UI
 
-The first Web UI is a minimal Today screen. It lets you type free text, sends it to `POST /api/message` with `source=web_text`, and refreshes today's plan, tasks, and goals from the existing API endpoints.
+The first Web UI is a minimal Today screen. It lets you type free text, sends it to `POST /api/message` with `source=web_text`, and refreshes today's plan, tasks, goals, and progress from the existing API endpoints. Today tasks have checkboxes that call the backend done endpoint; planning logic remains in services.
 
 Start the backend first:
 

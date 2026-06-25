@@ -95,6 +95,53 @@ def test_tasks_are_isolated_by_user(client: TestClient):
     assert [task["title"] for task in user_b_tasks] == ["купить продукты"]
 
 
+def test_done_endpoint_updates_task_and_keeps_user_isolation(client: TestClient):
+    user_a_response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "done-user-a",
+            "source": "web_text",
+            "text": "Сегодня хочу оплатить счета",
+        },
+    )
+    user_b_response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "done-user-b",
+            "source": "web_text",
+            "text": "Сегодня хочу купить продукты",
+        },
+    )
+
+    user_a_task_id = user_a_response.json()["affected_tasks"][0]["id"]
+    user_b_task_id = user_b_response.json()["affected_tasks"][0]["id"]
+
+    forbidden_response = client.post(
+        f"/api/tasks/{user_b_task_id}/done",
+        json={"user_external_id": "done-user-a"},
+    )
+    done_response = client.post(
+        f"/api/tasks/{user_a_task_id}/done",
+        json={"user_external_id": "done-user-a"},
+    )
+
+    assert forbidden_response.status_code == 404
+    assert done_response.status_code == 200
+    assert done_response.json()["status"] == "done"
+
+    user_a_tasks = client.get("/api/tasks/done-user-a").json()
+    user_b_tasks = client.get("/api/tasks/done-user-b").json()
+    user_a_plan = client.get("/api/plan/done-user-a?date=today").json()
+
+    assert [(task["title"], task["status"]) for task in user_a_tasks] == [
+        ("оплатить счета", "done")
+    ]
+    assert [(task["title"], task["status"]) for task in user_b_tasks] == [
+        ("купить продукты", "planned")
+    ]
+    assert all(item["task_id"] != user_a_task_id for item in user_a_plan["items"])
+
+
 def test_get_goals_returns_user_goals(client: TestClient):
     client.post(
         "/api/message",

@@ -110,6 +110,15 @@ def list_active_tasks(db: Session, user: User, target_date: date | None = None) 
     return query.order_by(Task.target_date.asc(), Task.id.asc()).all()
 
 
+def list_user_tasks(db: Session, user: User, target_date: date | None = None) -> list[Task]:
+    query = db.query(Task).filter(Task.user_id == user.id)
+
+    if target_date is not None:
+        query = query.filter(Task.target_date == target_date)
+
+    return query.order_by(Task.target_date.asc(), Task.id.asc()).all()
+
+
 def _find_active_task_by_title(
     db: Session,
     user: User,

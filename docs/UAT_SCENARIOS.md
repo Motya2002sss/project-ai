@@ -171,4 +171,6 @@ Expected:
 - Today plan refreshes from `GET /api/plan/{user_external_id}?date=today`.
 - Tasks refresh from `GET /api/tasks/{user_external_id}`.
 - Goals refresh from `GET /api/goals/{user_external_id}`.
+- Checking a Today task calls `POST /api/tasks/{task_id}/done`.
+- The completed task becomes muted/struck through, progress changes to `Сделано X из Y`, and the remaining plan is rebuilt.
 - Changing `User ID` switches the temporary local MVP identity stored in `localStorage`.
