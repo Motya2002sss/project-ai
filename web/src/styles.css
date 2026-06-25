@@ -168,9 +168,20 @@ button:disabled {
 
 .task-row {
   overflow: hidden;
+  border: 1px solid rgba(232, 222, 210, 0.52);
   border-radius: 8px;
   background: #ffffff;
   box-shadow: 0 14px 34px rgba(62, 45, 27, 0.055);
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    transform 150ms ease;
+}
+
+.task-row:not(.task-row-done):hover {
+  border-color: rgba(143, 174, 139, 0.45);
+  box-shadow: 0 18px 40px rgba(62, 45, 27, 0.075);
+  transform: translateY(-1px);
 }
 
 .task-row label {
@@ -254,8 +265,10 @@ button:disabled {
 }
 
 .task-row-done {
+  border-color: transparent;
   background: rgba(255, 255, 255, 0.62);
   box-shadow: none;
+  opacity: 0.82;
 }
 
 .task-row-done .task-copy strong {
@@ -278,14 +291,26 @@ button:disabled {
   line-height: 1.55;
 }
 
+.completion-note {
+  margin: 13px 0 0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  color: #667561;
+  background: #eaf1e7;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .input-surface {
   position: relative;
   overflow: hidden;
   margin-bottom: 24px;
   border: 0;
   border-radius: 8px;
-  padding: 24px;
-  background: #fbf8f2;
+  padding: 26px;
+  background:
+    linear-gradient(145deg, rgba(234, 241, 231, 0.48), transparent 46%),
+    #fbf8f2;
   box-shadow: 0 18px 45px rgba(62, 45, 27, 0.06);
 }
 
@@ -304,11 +329,19 @@ button:disabled {
 
 .input-heading {
   display: grid;
-  gap: 5px;
+  gap: 6px;
+}
+
+.input-eyebrow {
+  margin-bottom: 2px;
+  color: #7d987a;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .input-heading label {
-  font-size: 20px;
+  font-size: 21px;
   font-weight: 680;
 }
 
@@ -316,18 +349,36 @@ button:disabled {
   margin: 0;
   color: #8b8174;
   font-size: 13px;
+  line-height: 1.45;
+}
+
+.thought-field {
+  border-radius: 8px;
+  padding: 16px 17px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 0 0 1px rgba(232, 222, 210, 0.52);
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.thought-field:focus-within {
+  background: #ffffff;
+  box-shadow:
+    inset 0 0 0 1px #cbd8c6,
+    0 0 0 3px rgba(143, 174, 139, 0.13);
 }
 
 textarea {
   width: 100%;
-  min-height: 104px;
+  min-height: 92px;
   max-height: 210px;
   resize: vertical;
-  border: 1px solid #eee7de;
-  border-radius: 8px;
-  padding: 14px 15px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
   color: #2f2a25;
-  background: rgba(255, 255, 255, 0.82);
+  background: transparent;
   outline: none;
   line-height: 1.5;
 }
@@ -336,7 +387,6 @@ textarea::placeholder {
   color: #a0968a;
 }
 
-textarea:focus,
 .developer-settings input:focus {
   border-color: #cbd8c6;
   box-shadow: 0 0 0 3px rgba(143, 174, 139, 0.16);
@@ -356,10 +406,11 @@ textarea:focus,
 
 .assistant-note {
   margin: 0 0 38px;
+  border-left: 3px solid rgba(143, 174, 139, 0.72);
   border-radius: 8px;
-  padding: 17px 19px;
+  padding: 17px 19px 17px 18px;
   color: #4e493f;
-  background: #eaf1e7;
+  background: rgba(234, 241, 231, 0.78);
 }
 
 .assistant-note p {
@@ -412,6 +463,9 @@ textarea:focus,
 .later-task-list .task-row {
   border-radius: 0;
   border-bottom: 1px solid #e8ded2;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
   background: transparent;
   box-shadow: none;
 }
@@ -528,7 +582,7 @@ textarea:focus,
   }
 
   .input-surface {
-    padding: 21px 19px 20px;
+    padding: 23px 20px 21px;
   }
 
   .input-actions {

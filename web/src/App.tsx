@@ -128,8 +128,32 @@ function priorityLabel(priority: string): string {
   return labels[priority] || priority;
 }
 
-function responseSummary(replyText: string): string {
-  return replyText.split("\n\nПлан дня:")[0].trim();
+function responseSummary(response: MessageResponse): string {
+  const taskTitles = response.affected_tasks.map((task) => task.title);
+  const goalTitles = response.affected_goals.map((goal) => goal.title);
+
+  if (taskTitles.length > 0) {
+    return `День обновлён. Я добавил в план: ${taskTitles.join(", ")}.`;
+  }
+
+  if (goalTitles.length > 0) {
+    return `Цели обновлены: ${goalTitles.join(", ")}.`;
+  }
+
+  const intentMessages: Record<string, string> = {
+    show_plan: "План актуален. Можно начать с самого простого шага.",
+    show_tasks: "Все текущие шаги собраны в одном месте.",
+    mark_done: "Готово. Я обновил день после выполненной задачи.",
+    daily_summary: "Итог дня сохранён. Оставшиеся шаги не потеряются.",
+    update_profile: "Настройки сохранены. Я буду учитывать их в следующих планах.",
+    reschedule: "День обновлён с учётом новых обстоятельств.",
+    clear_tasks: "План очищен. Можно спокойно собрать день заново."
+  };
+
+  return (
+    intentMessages[response.intent] ||
+    response.reply_text.split("\n\nПлан дня:")[0].trim()
+  );
 }
 
 async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
@@ -183,6 +207,7 @@ export default function App() {
   const progressPercent = todayTasks.length
     ? Math.round((doneToday.length / todayTasks.length) * 100)
     : 0;
+  const allTodayDone = todayTasks.length > 0 && doneToday.length === todayTasks.length;
 
   async function refreshData(nextUserId = userId) {
     setDataStatus("loading");
@@ -316,15 +341,21 @@ export default function App() {
             <p className="section-kicker">Вот твой день</p>
             <h2 id="today-plan-title">План на сегодня</h2>
           </div>
-          <div
-            className="plan-progress"
-            aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
-          >
-            <span>Сделано {doneToday.length} из {todayTasks.length}</span>
-            <span className="progress-track" aria-hidden="true">
-              <span style={{ width: `${progressPercent}%` }} />
-            </span>
-          </div>
+          {todayTasks.length > 0 && (
+            <div
+              className="plan-progress"
+              aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
+            >
+              <span>
+                {allTodayDone
+                  ? "Все задачи закрыты"
+                  : `Сделано ${doneToday.length} из ${todayTasks.length}`}
+              </span>
+              <span className="progress-track" aria-hidden="true">
+                <span style={{ width: `${progressPercent}%` }} />
+              </span>
+            </div>
+          )}
         </div>
         {plan?.energy_level && <p className="energy-line">{energyLabel(plan.energy_level)}</p>}
 
@@ -362,25 +393,31 @@ export default function App() {
         ) : (
           <EmptyState text="На сегодня пока ничего не запланировано" />
         )}
+        {allTodayDone && (
+          <p className="completion-note">День закрыт мягко. Можно выдохнуть.</p>
+        )}
       </section>
 
       <section className="input-surface" aria-labelledby="mind-input-title">
         <form onSubmit={handleSubmit}>
           <div className="input-heading">
+            <span className="input-eyebrow">Разгрузить мысли</span>
             <label id="mind-input-title" htmlFor="mind-input">
               Что у тебя в голове?
             </label>
-            <p>Я превращу это в реалистичный план дня.</p>
+            <p>Напиши как есть — я соберу из этого реалистичный план.</p>
           </div>
-          <textarea
-            id="mind-input"
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            placeholder="Например: сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
-            rows={3}
-          />
+          <div className="thought-field">
+            <textarea
+              id="mind-input"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="Например: сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
+              rows={3}
+            />
+          </div>
           <div className="input-actions">
-            <span className="input-hint">Можно писать обычным текстом</span>
+            <span className="input-hint">Без формата и правильных слов</span>
             <button type="submit" disabled={submitStatus === "loading" || !draft.trim()}>
               {submitStatus === "loading" ? "Собираю..." : "Собрать день"}
             </button>
@@ -390,8 +427,8 @@ export default function App() {
 
       {lastResponse && (
         <section className="assistant-note" aria-live="polite">
-          <p className="assistant-label">Небольшое резюме</p>
-          <p>{responseSummary(lastResponse.reply_text)}</p>
+          <p className="assistant-label">План обновлён</p>
+          <p>{responseSummary(lastResponse)}</p>
           <ChangeSummary response={lastResponse} />
         </section>
       )}
