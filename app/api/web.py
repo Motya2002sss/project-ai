@@ -12,6 +12,7 @@ from app.schemas.api import (
     ProfileResponse,
     TaskDoneRequest,
     TaskResponse,
+    TaskStatusRequest,
 )
 from app.services.goal_service import list_active_goals
 from app.services.message_service import (
@@ -22,7 +23,7 @@ from app.services.message_service import (
     task_to_response,
 )
 from app.services.planning_service import rebuild_day_plan
-from app.services.task_service import list_user_tasks, mark_task_done
+from app.services.task_service import list_user_tasks, mark_task_done, set_task_status
 from app.services.user_service import get_or_create_user_by_external_id
 
 
@@ -82,6 +83,29 @@ def complete_task(
 ) -> TaskResponse:
     user = get_or_create_user_by_external_id(db=db, external_id=request.user_external_id)
     task = mark_task_done(db=db, user=user, task_id=task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found",
+        )
+
+    return task_to_response(task)
+
+
+@router.patch("/tasks/{task_id}/status", response_model=TaskResponse)
+def update_task_status(
+    task_id: int,
+    request: TaskStatusRequest,
+    db: Session = Depends(get_db),
+) -> TaskResponse:
+    user = get_or_create_user_by_external_id(db=db, external_id=request.user_external_id)
+    task = set_task_status(
+        db=db,
+        user=user,
+        task_id=task_id,
+        task_status=request.status,
+    )
 
     if task is None:
         raise HTTPException(

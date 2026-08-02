@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 MessageSource = Literal["web_text", "telegram_text", "telegram_voice_transcript"]
 DateSelector = Literal["today", "tomorrow"]
+TaskStatus = Literal["planned", "done"]
 
 
 class MessageRequest(BaseModel):
@@ -18,13 +19,18 @@ class TaskDoneRequest(BaseModel):
     user_external_id: str = Field(min_length=1, max_length=255)
 
 
+class TaskStatusRequest(BaseModel):
+    user_external_id: str = Field(min_length=1, max_length=255)
+    status: TaskStatus
+
+
 class TaskResponse(BaseModel):
     id: int
     title: str
     priority: str
     estimated_minutes: int | None
     target_date: date
-    status: str
+    status: TaskStatus
 
 
 class GoalResponse(BaseModel):

@@ -49,6 +49,20 @@ def client(tmp_path: Path, monkeypatch) -> Generator[TestClient, None, None]:
         Base.metadata.drop_all(bind=engine)
 
 
+def add_task(client: TestClient, user_external_id: str, text: str) -> dict:
+    response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_external_id,
+            "source": "web_text",
+            "text": text,
+        },
+    )
+
+    assert response.status_code == 200
+    return response.json()["affected_tasks"][0]
+
+
 def test_post_message_adds_task(client: TestClient):
     response = client.post(
         "/api/message",
@@ -95,51 +109,119 @@ def test_tasks_are_isolated_by_user(client: TestClient):
     assert [task["title"] for task in user_b_tasks] == ["купить продукты"]
 
 
-def test_done_endpoint_updates_task_and_keeps_user_isolation(client: TestClient):
-    user_a_response = client.post(
-        "/api/message",
-        json={
-            "user_external_id": "done-user-a",
-            "source": "web_text",
-            "text": "Сегодня хочу оплатить счета",
+def test_owner_can_set_planned_task_done(client: TestClient):
+    task = add_task(
+        client,
+        user_external_id="status-owner",
+        text="Сегодня хочу оплатить счета",
+    )
+
+    response = client.patch(
+        f"/api/tasks/{task['id']}/status",
+        json={"user_external_id": "status-owner", "status": "done"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "done"
+
+    plan = client.get("/api/plan/status-owner?date=today").json()
+    assert all(item["task_id"] != task["id"] for item in plan["items"])
+
+
+def test_owner_can_return_done_task_to_planned(client: TestClient):
+    task = add_task(
+        client,
+        user_external_id="status-return-owner",
+        text="Сегодня хочу разобрать документы",
+    )
+    client.patch(
+        f"/api/tasks/{task['id']}/status",
+        json={"user_external_id": "status-return-owner", "status": "done"},
+    )
+
+    response = client.patch(
+        f"/api/tasks/{task['id']}/status",
+        json={"user_external_id": "status-return-owner", "status": "planned"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "planned"
+
+    plan = client.get("/api/plan/status-return-owner?date=today").json()
+    assert any(item["task_id"] == task["id"] for item in plan["items"])
+
+
+def test_user_cannot_change_another_users_task_status(client: TestClient):
+    task = add_task(
+        client,
+        user_external_id="status-user-b",
+        text="Сегодня хочу купить продукты",
+    )
+
+    response = client.patch(
+        f"/api/tasks/{task['id']}/status",
+        json={"user_external_id": "status-user-a", "status": "done"},
+    )
+
+    assert response.status_code == 404
+    tasks = client.get("/api/tasks/status-user-b").json()
+    assert tasks[0]["status"] == "planned"
+
+
+def test_status_endpoint_returns_404_for_missing_task(client: TestClient):
+    response = client.patch(
+        "/api/tasks/999999/status",
+        json={"user_external_id": "missing-task-user", "status": "done"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_status_endpoint_rejects_unsupported_status(client: TestClient):
+    task = add_task(
+        client,
+        user_external_id="invalid-status-owner",
+        text="Сегодня хочу написать письмо",
+    )
+
+    response = client.patch(
+        f"/api/tasks/{task['id']}/status",
+        json={"user_external_id": "invalid-status-owner", "status": "cancelled"},
+    )
+
+    assert response.status_code == 422
+    tasks = client.get("/api/tasks/invalid-status-owner").json()
+    assert tasks[0]["status"] == "planned"
+
+
+def test_status_endpoint_allows_patch_from_local_web_origin(client: TestClient):
+    response = client.options(
+        "/api/tasks/1/status",
+        headers={
+            "Origin": "http://127.0.0.1:5173",
+            "Access-Control-Request-Method": "PATCH",
+            "Access-Control-Request-Headers": "content-type",
         },
     )
-    user_b_response = client.post(
-        "/api/message",
-        json={
-            "user_external_id": "done-user-b",
-            "source": "web_text",
-            "text": "Сегодня хочу купить продукты",
-        },
+
+    assert response.status_code == 200
+    assert "PATCH" in response.headers["access-control-allow-methods"]
+
+
+def test_legacy_done_endpoint_still_works(client: TestClient):
+    task = add_task(
+        client,
+        user_external_id="legacy-done-owner",
+        text="Сегодня хочу проверить отчёт",
     )
 
-    user_a_task_id = user_a_response.json()["affected_tasks"][0]["id"]
-    user_b_task_id = user_b_response.json()["affected_tasks"][0]["id"]
-
-    forbidden_response = client.post(
-        f"/api/tasks/{user_b_task_id}/done",
-        json={"user_external_id": "done-user-a"},
-    )
-    done_response = client.post(
-        f"/api/tasks/{user_a_task_id}/done",
-        json={"user_external_id": "done-user-a"},
+    response = client.post(
+        f"/api/tasks/{task['id']}/done",
+        json={"user_external_id": "legacy-done-owner"},
     )
 
-    assert forbidden_response.status_code == 404
-    assert done_response.status_code == 200
-    assert done_response.json()["status"] == "done"
-
-    user_a_tasks = client.get("/api/tasks/done-user-a").json()
-    user_b_tasks = client.get("/api/tasks/done-user-b").json()
-    user_a_plan = client.get("/api/plan/done-user-a?date=today").json()
-
-    assert [(task["title"], task["status"]) for task in user_a_tasks] == [
-        ("оплатить счета", "done")
-    ]
-    assert [(task["title"], task["status"]) for task in user_b_tasks] == [
-        ("купить продукты", "planned")
-    ]
-    assert all(item["task_id"] != user_a_task_id for item in user_a_plan["items"])
+    assert response.status_code == 200
+    assert response.json()["status"] == "done"
 
 
 def test_get_goals_returns_user_goals(client: TestClient):

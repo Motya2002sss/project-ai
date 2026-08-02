@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from typing import Literal
 
 from sqlalchemy.orm import Session
 
@@ -163,7 +164,15 @@ def find_active_tasks_by_titles(
     return found
 
 
-def mark_task_done(db: Session, user: User, task_id: int) -> Task | None:
+def set_task_status(
+    db: Session,
+    user: User,
+    task_id: int,
+    task_status: Literal["planned", "done"],
+) -> Task | None:
+    if task_status not in {"planned", "done"}:
+        raise ValueError("Unsupported task status")
+
     task = (
         db.query(Task)
         .filter(
@@ -176,11 +185,20 @@ def mark_task_done(db: Session, user: User, task_id: int) -> Task | None:
     if task is None:
         return None
 
-    task.status = "done"
+    task.status = task_status
     db.commit()
     db.refresh(task)
 
     return task
+
+
+def mark_task_done(db: Session, user: User, task_id: int) -> Task | None:
+    return set_task_status(
+        db=db,
+        user=user,
+        task_id=task_id,
+        task_status="done",
+    )
 
 
 def mark_task_done_by_title(

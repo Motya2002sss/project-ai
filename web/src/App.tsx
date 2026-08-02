@@ -1,59 +1,18 @@
-import { FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 
-type MessageSource = "web_text";
+import { checkHealth, getTodayData, processMessage, setTaskStatus } from "./api";
+import BrainDumpCard from "./components/BrainDumpCard";
+import TaskRow from "./components/TaskRow";
+import TodayPlan from "./components/TodayPlan";
+import type {
+  Goal,
+  LoadState,
+  MessageResponse,
+  Plan,
+  Task,
+  TaskStatus
+} from "./types";
 
-type Task = {
-  id: number;
-  title: string;
-  priority: string;
-  estimated_minutes: number | null;
-  target_date: string;
-  status: string;
-};
-
-type Goal = {
-  id: number;
-  title: string;
-  category: string;
-  priority: string;
-  status: string;
-};
-
-type PlanItem = {
-  id: number;
-  task_id: number | null;
-  title: string;
-  item_type: string;
-  status: string;
-  start_time: string | null;
-  end_time: string | null;
-};
-
-type Plan = {
-  id: number;
-  date: string;
-  summary: string | null;
-  energy_level: string | null;
-  budget_limit: number | null;
-  status: string;
-  items: PlanItem[];
-};
-
-type MessageResponse = {
-  user_external_id: string;
-  source: MessageSource;
-  intent: string;
-  parsed: Record<string, unknown>;
-  reply_text: string;
-  summary: string | null;
-  affected_tasks: Task[];
-  affected_goals: Goal[];
-  plan_summary: Plan | null;
-};
-
-type LoadState = "idle" | "loading" | "ready" | "error";
-
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 const USER_ID_STORAGE_KEY = "ai-life-planner-user-id";
 
 function localDateValue(): string {
@@ -71,10 +30,6 @@ function formatToday(): string {
     day: "numeric",
     month: "long"
   }).format(new Date());
-}
-
-function formatTime(value: string | null): string | null {
-  return value ? value.slice(0, 5) : null;
 }
 
 function formatTaskDate(value: string): string {
@@ -99,23 +54,6 @@ function formatTaskDate(value: string): string {
     day: "numeric",
     month: "short"
   }).format(new Date(`${value}T00:00:00`));
-}
-
-function formatDuration(minutes: number | null): string | null {
-  if (!minutes) {
-    return null;
-  }
-
-  if (minutes < 60) {
-    return `${minutes} мин`;
-  }
-
-  if (minutes % 60 === 0) {
-    const hours = minutes / 60;
-    return `${hours} ч`;
-  }
-
-  return `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
 }
 
 function priorityLabel(priority: string): string {
@@ -156,20 +94,17 @@ function responseSummary(response: MessageResponse): string {
   );
 }
 
-async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers
-    },
-    ...options
-  });
+function ChangeSummary({ response }: { response: MessageResponse }) {
+  const titles = [
+    ...response.affected_tasks.map((task) => task.title),
+    ...response.affected_goals.map((goal) => goal.title)
+  ];
 
-  if (!response.ok) {
-    throw new Error(`Сервис ответил с ошибкой ${response.status}`);
+  if (!titles.length) {
+    return null;
   }
 
-  return response.json() as Promise<T>;
+  return <p className="change-line">Обновлено: {titles.join(", ")}</p>;
 }
 
 export default function App() {
@@ -180,12 +115,13 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState<LoadState>("idle");
   const [dataStatus, setDataStatus] = useState<LoadState>("idle");
   const [submitStatus, setSubmitStatus] = useState<LoadState>("idle");
-  const [completingTaskIds, setCompletingTaskIds] = useState<Set<number>>(new Set());
+  const [pendingTaskIds, setPendingTaskIds] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [goals, setGoals] = useState<Goal[]>([]);
   const [lastResponse, setLastResponse] = useState<MessageResponse | null>(null);
+  const loadedUserId = useRef<string | null>(null);
 
   const todayText = useMemo(() => formatToday(), []);
   const todayValue = useMemo(() => localDateValue(), []);
@@ -193,63 +129,61 @@ export default function App() {
     () => tasks.filter((task) => task.target_date === todayValue),
     [tasks, todayValue]
   );
-  const doneToday = todayTasks.filter((task) => task.status === "done");
-  const taskById = new Map(tasks.map((task) => [task.id, task]));
-  const scheduledItems = (plan?.items || []).filter((item) => item.status === "planned");
-  const scheduledTaskIds = new Set(
-    scheduledItems.flatMap((item) => (item.task_id === null ? [] : [item.task_id]))
+  const scheduledItems = useMemo(
+    () => (plan?.items || []).filter((item) => item.status === "planned"),
+    [plan]
   );
-  const laterTasks = tasks.filter(
-    (task) =>
-      task.status !== "done" &&
-      (task.target_date !== todayValue || !scheduledTaskIds.has(task.id))
+  const scheduledTaskIds = useMemo(
+    () =>
+      new Set(
+        scheduledItems.flatMap((item) => (item.task_id === null ? [] : [item.task_id]))
+      ),
+    [scheduledItems]
   );
-  const progressPercent = todayTasks.length
-    ? Math.round((doneToday.length / todayTasks.length) * 100)
-    : 0;
-  const allTodayDone = todayTasks.length > 0 && doneToday.length === todayTasks.length;
+  const laterTasks = useMemo(
+    () =>
+      tasks.filter(
+        (task) =>
+          task.status !== "done" &&
+          (task.target_date !== todayValue || !scheduledTaskIds.has(task.id))
+      ),
+    [scheduledTaskIds, tasks, todayValue]
+  );
 
-  async function refreshData(nextUserId = userId) {
+  async function refreshData(nextUserId = userId): Promise<void> {
     setDataStatus("loading");
-    setError(null);
 
     try {
-      const [planData, taskData, goalData] = await Promise.all([
-        requestJson<Plan>(`/api/plan/${encodeURIComponent(nextUserId)}?date=today`),
-        requestJson<Task[]>(`/api/tasks/${encodeURIComponent(nextUserId)}`),
-        requestJson<Goal[]>(`/api/goals/${encodeURIComponent(nextUserId)}`)
-      ]);
-
-      setPlan(planData);
-      setTasks(taskData);
-      setGoals(goalData);
+      const data = await getTodayData(nextUserId);
+      setPlan(data.plan);
+      setTasks(data.tasks);
+      setGoals(data.goals);
       setDataStatus("ready");
     } catch (refreshError) {
       setDataStatus("error");
-      setError(refreshError instanceof Error ? refreshError.message : "Не удалось загрузить день");
+      throw refreshError;
     }
   }
 
   useEffect(() => {
-    async function checkBackend() {
-      setBackendStatus("loading");
-
-      try {
-        await requestJson<{ status: string }>("/health");
-        setBackendStatus("ready");
-      } catch {
-        setBackendStatus("error");
-      }
-    }
-
-    checkBackend();
+    setBackendStatus("loading");
+    void checkHealth()
+      .then(() => setBackendStatus("ready"))
+      .catch(() => setBackendStatus("error"));
   }, []);
 
   useEffect(() => {
+    if (loadedUserId.current === userId) {
+      return;
+    }
+
+    loadedUserId.current = userId;
     localStorage.setItem(USER_ID_STORAGE_KEY, userId);
-    refreshData(userId);
-    // refreshData is intentionally called when the persisted user identity changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setError(null);
+
+    void refreshData(userId).catch(() => {
+      setError("Не удалось загрузить день. Проверь, что backend запущен, и попробуй ещё раз.");
+    });
   }, [userId]);
 
   function applyUserId() {
@@ -266,9 +200,7 @@ export default function App() {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
+  async function handleSubmit(): Promise<void> {
     const text = draft.trim();
 
     if (!text) {
@@ -278,46 +210,54 @@ export default function App() {
     setSubmitStatus("loading");
     setError(null);
 
+    let response: MessageResponse;
+
     try {
-      const response = await requestJson<MessageResponse>("/api/message", {
-        method: "POST",
-        body: JSON.stringify({
-          user_external_id: userId,
-          source: "web_text",
-          text
-        })
-      });
-
-      setLastResponse(response);
-      setDraft("");
-      await refreshData(userId);
-      setSubmitStatus("ready");
-    } catch (submitError) {
+      response = await processMessage(userId, text);
+    } catch {
       setSubmitStatus("error");
-      setError(submitError instanceof Error ? submitError.message : "Не удалось разобрать текст");
-    }
-  }
-
-  async function handleTaskDone(task: Task) {
-    if (task.status === "done" || completingTaskIds.has(task.id)) {
+      setError("Не удалось обновить план. Текст сохранён — попробуй ещё раз.");
       return;
     }
 
-    setCompletingTaskIds((current) => new Set(current).add(task.id));
+    setLastResponse(response);
+    setDraft("");
+
+    try {
+      await refreshData(userId);
+    } catch {
+      setError("Запись сохранена, но день не обновился. Перезагрузи страницу чуть позже.");
+    }
+
+    setSubmitStatus("ready");
+  }
+
+  async function handleTaskStatusChange(task: Task, nextStatus: TaskStatus): Promise<void> {
+    if (task.status === nextStatus || pendingTaskIds.has(task.id)) {
+      return;
+    }
+
+    setPendingTaskIds((current) => new Set(current).add(task.id));
     setError(null);
 
     try {
-      await requestJson<Task>(`/api/tasks/${task.id}/done`, {
-        method: "POST",
-        body: JSON.stringify({ user_external_id: userId })
+      await setTaskStatus(userId, task.id, nextStatus);
+    } catch {
+      setError("Не удалось обновить задачу. Её прежний статус сохранён.");
+      setPendingTaskIds((current) => {
+        const next = new Set(current);
+        next.delete(task.id);
+        return next;
       });
+      return;
+    }
+
+    try {
       await refreshData(userId);
-    } catch (completeError) {
-      setError(
-        completeError instanceof Error ? completeError.message : "Не удалось отметить задачу"
-      );
+    } catch {
+      setError("Статус изменён, но не удалось обновить весь день. Перезагрузи страницу.");
     } finally {
-      setCompletingTaskIds((current) => {
+      setPendingTaskIds((current) => {
         const next = new Set(current);
         next.delete(task.id);
         return next;
@@ -335,95 +275,21 @@ export default function App() {
 
       {error && <p className="error-line">{error}</p>}
 
-      <section className="today-plan" aria-labelledby="today-plan-title">
-        <div className="section-heading">
-          <div>
-            <p className="section-kicker">Вот твой день</p>
-            <h2 id="today-plan-title">План на сегодня</h2>
-          </div>
-          {todayTasks.length > 0 && (
-            <div
-              className="plan-progress"
-              aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
-            >
-              <span>
-                {allTodayDone
-                  ? "Все задачи закрыты"
-                  : `Сделано ${doneToday.length} из ${todayTasks.length}`}
-              </span>
-              <span className="progress-track" aria-hidden="true">
-                <span style={{ width: `${progressPercent}%` }} />
-              </span>
-            </div>
-          )}
-        </div>
-        {plan?.energy_level && <p className="energy-line">{energyLabel(plan.energy_level)}</p>}
+      <TodayPlan
+        dataStatus={dataStatus}
+        plan={plan}
+        todayTasks={todayTasks}
+        scheduledItems={scheduledItems}
+        pendingTaskIds={pendingTaskIds}
+        onStatusChange={handleTaskStatusChange}
+      />
 
-        {dataStatus === "loading" ? (
-          <EmptyState text="Собираю план дня..." />
-        ) : scheduledItems.length || doneToday.length ? (
-          <ul className="today-task-list">
-            {scheduledItems.map((item) => {
-              const task = item.task_id === null ? null : taskById.get(item.task_id);
-
-              if (!task) {
-                return null;
-              }
-
-              return (
-                <TaskRow
-                  key={`planned-${task.id}`}
-                  task={task}
-                  time={formatTime(item.start_time)}
-                  pending={completingTaskIds.has(task.id)}
-                  onDone={handleTaskDone}
-                />
-              );
-            })}
-            {doneToday.map((task) => (
-              <TaskRow
-                key={`done-${task.id}`}
-                task={task}
-                time={null}
-                pending={false}
-                onDone={handleTaskDone}
-              />
-            ))}
-          </ul>
-        ) : (
-          <EmptyState text="На сегодня пока ничего не запланировано" />
-        )}
-        {allTodayDone && (
-          <p className="completion-note">День закрыт мягко. Можно выдохнуть.</p>
-        )}
-      </section>
-
-      <section className="input-surface" aria-labelledby="mind-input-title">
-        <form onSubmit={handleSubmit}>
-          <div className="input-heading">
-            <span className="input-eyebrow">Разгрузить мысли</span>
-            <label id="mind-input-title" htmlFor="mind-input">
-              Что у тебя в голове?
-            </label>
-            <p>Напиши как есть — я соберу из этого реалистичный план.</p>
-          </div>
-          <div className="thought-field">
-            <textarea
-              id="mind-input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="Например: сегодня мало сил, надо оплатить счета и 40 минут поделать проект"
-              rows={3}
-            />
-          </div>
-          <div className="input-actions">
-            <span className="input-hint">Без формата и правильных слов</span>
-            <button type="submit" disabled={submitStatus === "loading" || !draft.trim()}>
-              {submitStatus === "loading" ? "Собираю..." : "Собрать день"}
-            </button>
-          </div>
-        </form>
-      </section>
+      <BrainDumpCard
+        draft={draft}
+        submitting={submitStatus === "loading"}
+        onDraftChange={setDraft}
+        onSubmit={handleSubmit}
+      />
 
       {lastResponse && (
         <section className="assistant-note" aria-live="polite">
@@ -444,8 +310,8 @@ export default function App() {
                 key={`later-${task.id}`}
                 task={task}
                 time={task.target_date === todayValue ? null : formatTaskDate(task.target_date)}
-                pending={completingTaskIds.has(task.id)}
-                onDone={handleTaskDone}
+                pending={pendingTaskIds.has(task.id)}
+                onStatusChange={handleTaskStatusChange}
                 compact
               />
             ))}
@@ -496,76 +362,4 @@ export default function App() {
       </details>
     </main>
   );
-}
-
-function TaskRow({
-  task,
-  time,
-  pending,
-  onDone,
-  compact = false
-}: {
-  task: Task;
-  time: string | null;
-  pending: boolean;
-  onDone: (task: Task) => Promise<void>;
-  compact?: boolean;
-}) {
-  const done = task.status === "done";
-  const duration = formatDuration(task.estimated_minutes);
-
-  return (
-    <li className={`task-row ${done ? "task-row-done" : ""} ${compact ? "task-row-compact" : ""}`}>
-      <label>
-        <input
-          type="checkbox"
-          checked={done}
-          disabled={done || pending}
-          onChange={() => onDone(task)}
-          aria-label={`Отметить задачу «${task.title}» выполненной`}
-        />
-        <span className="task-copy">
-          <strong>{task.title}</strong>
-          <span className="task-meta">
-            {done ? (
-              "Сделано"
-            ) : (
-              <>
-                {time && <span>{time}</span>}
-                {duration && <span>{duration}</span>}
-                {!time && !duration && <span>Без времени</span>}
-              </>
-            )}
-          </span>
-        </span>
-      </label>
-    </li>
-  );
-}
-
-function ChangeSummary({ response }: { response: MessageResponse }) {
-  const titles = [
-    ...response.affected_tasks.map((task) => task.title),
-    ...response.affected_goals.map((goal) => goal.title)
-  ];
-
-  if (!titles.length) {
-    return null;
-  }
-
-  return <p className="change-line">Обновлено: {titles.join(", ")}</p>;
-}
-
-function EmptyState({ text }: { text: string }) {
-  return <p className="empty-state">{text}</p>;
-}
-
-function energyLabel(energy: string): string {
-  const labels: Record<string, string> = {
-    low: "Бережный темп",
-    medium: "Обычный темп",
-    high: "Много энергии"
-  };
-
-  return labels[energy] || energy;
 }
