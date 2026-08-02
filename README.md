@@ -66,10 +66,11 @@ ai-life-planner/
 │   ├── llm/              # mock parser, prompts, parser schemas
 │   ├── models/           # SQLAlchemy models
 │   └── services/         # business logic
-├── docs/
-│   ├── PRODUCT_SPEC.md
-│   ├── SECURITY_BASELINE.md
-│   └── UAT_SCENARIOS.md
+├── docs/                 # Russian Obsidian project vault
+│   ├── 00 Главная.md
+│   ├── 02 Дорожная карта/
+│   ├── 05 Тестирование продукта/
+│   └── 07 Техническая документация/
 ├── migrations/           # Alembic migrations
 ├── scripts/
 │   └── check_mvp.py
@@ -440,12 +441,12 @@ cd web
 npm run build
 ```
 
-## Documentation
+## Документация проекта
 
-- [Product spec](docs/PRODUCT_SPEC.md)
-- [Security baseline](docs/SECURITY_BASELINE.md)
-- [Manual UAT scenarios](docs/UAT_SCENARIOS.md)
-- [Codex/project instructions](AGENTS.md)
+Главная точка входа в русскоязычный Obsidian vault:
+
+- [00 Главная](docs/00%20Главная.md)
+- [Текущая дорожная карта](docs/02%20Дорожная%20карта/Сейчас%20—%20далее%20—%20позже.md)
 
 ## Security Notes
 
@@ -455,7 +456,7 @@ npm run build
 - User-owned data must be filtered by user context.
 - Schema changes must go through Alembic.
 - Do not delete Docker volumes or user data as a shortcut.
-- See [docs/SECURITY_BASELINE.md](docs/SECURITY_BASELINE.md) before adding auth, LLM calls, logging, or deployment configuration.
+- See [Базовая безопасность](docs/07%20Техническая%20документация/Базовая%20безопасность.md) before adding auth, LLM calls, logging, or deployment configuration.
 
 ## Development Principles
 

@@ -1,0 +1,79 @@
+{
+  "collapse-filter": false,
+  "search": "",
+  "showTags": false,
+  "showAttachments": false,
+  "hideUnresolved": false,
+  "showOrphans": true,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    {
+      "query": "path:\"01 Продукт\"",
+      "color": {
+        "a": 1,
+        "rgb": 9416331
+      }
+    },
+    {
+      "query": "path:\"02 Дорожная карта\"",
+      "color": {
+        "a": 1,
+        "rgb": 8363445
+      }
+    },
+    {
+      "query": "path:\"03 Решения\"",
+      "color": {
+        "a": 1,
+        "rgb": 11901567
+      }
+    },
+    {
+      "query": "path:\"04 Дизайн\"",
+      "color": {
+        "a": 1,
+        "rgb": 11110306
+      }
+    },
+    {
+      "query": "path:\"05 Тестирование продукта\"",
+      "color": {
+        "a": 1,
+        "rgb": 7579040
+      }
+    },
+    {
+      "query": "path:\"06 Идеи и бэклог\"",
+      "color": {
+        "a": 1,
+        "rgb": 11905135
+      }
+    },
+    {
+      "query": "path:\"07 Техническая документация\"",
+      "color": {
+        "a": 1,
+        "rgb": 9012904
+      }
+    },
+    {
+      "query": "path:\"99 Шаблоны\"",
+      "color": {
+        "a": 1,
+        "rgb": 10526880
+      }
+    }
+  ],
+  "collapse-display": true,
+  "showArrow": false,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 3.59635416666667,
+  "lineSizeMultiplier": 4.6171875,
+  "collapse-forces": false,
+  "centerStrength": 0.276041666666667,
+  "repelStrength": 5.3125,
+  "linkStrength": 1,
+  "linkDistance": 263,
+  "scale": 0.7132754626224393,
+  "close": false
+}

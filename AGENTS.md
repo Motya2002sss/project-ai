@@ -43,9 +43,23 @@ The repository already contains a working MVP foundation:
 - daily summary flow;
 - smoke-check script at `scripts/check_mvp.py`;
 - parser eval dataset at `tests/fixtures/parser_cases.json`;
-- product, UAT, and security docs in `docs/`.
+- Russian product, roadmap, UAT, and security documentation in the Obsidian vault at `docs/`.
 
 Treat these pieces as active product code. Preserve the existing MVP flows unless the user explicitly asks to change them.
+
+## Required Product Context
+
+Before starting a product or architecture task, read:
+
+```text
+docs/00 Главная.md
+docs/02 Дорожная карта/Сейчас — далее — позже.md
+docs/03 Решения/Журнал решений.md
+```
+
+If a task changes product strategy, architecture, or the active roadmap stage, update the corresponding vault documents in the same commit.
+
+Do not require documentation updates for every small CSS adjustment, isolated typo, or other change that does not alter behavior, strategy, architecture, or roadmap state.
 
 ## Architecture Rules
 
@@ -114,7 +128,7 @@ The planner must work for finance, study, health, family, creativity, career, pe
 
 ## Security Rules
 
-Follow `docs/SECURITY_BASELINE.md`.
+Follow `docs/07 Техническая документация/Базовая безопасность.md`.
 
 Never commit:
 

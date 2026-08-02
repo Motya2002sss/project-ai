@@ -23,3 +23,11 @@ logs/
 dist/
 build/
 *.egg-info/
+
+# Obsidian vault: keep only stable shared settings.
+docs/.obsidian/*
+!docs/.obsidian/app.json
+!docs/.obsidian/core-plugins.json
+!docs/.obsidian/templates.json
+!docs/.obsidian/daily-notes.json
+!docs/.obsidian/graph.json
