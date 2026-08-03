@@ -308,7 +308,7 @@
           "scheduling_type": "unscheduled",
           "preferred_window": "morning",
           "needs_clarification": true,
-          "clarification_reason": "recurrence_not_supported"
+          "clarification_reason": "ambiguous_recurrence"
         }
       ]
     }
@@ -379,6 +379,142 @@
           "scheduling_type": "flexible",
           "earliest_start": "15:00",
           "latest_end": "18:00"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Добавь задачу оплатить интернет",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_contains": ["оплатить интернет"],
+      "task_titles_exclude": ["добавь", "задачу"]
+    }
+  },
+  {
+    "text": "Запиши мне позвонить маме",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_contains": ["позвонить маме"],
+      "task_titles_exclude": ["запиши", "мне"]
+    }
+  },
+  {
+    "text": "Проект 40 минут",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "проект",
+          "operation": "create",
+          "scheduling_type": "flexible",
+          "estimated_minutes": 40
+        }
+      ]
+    }
+  },
+  {
+    "text": "Утром сходить в зал",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "сходить в зал",
+          "scheduling_type": "flexible",
+          "preferred_window": "morning"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Каждый день напоминай записывать БЖУ",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "записывать БЖУ",
+          "scheduling_type": "unscheduled",
+          "recurrence_hint": "каждый день",
+          "needs_clarification": true,
+          "clarification_reason": "missing_routine_time"
+        }
+      ]
+    }
+  },
+  {
+    "text": "По будням учить английский вечером",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "учить английский",
+          "scheduling_type": "unscheduled",
+          "preferred_window": "evening",
+          "recurrence_hint": "по будням",
+          "needs_clarification": false
+        }
+      ]
+    }
+  },
+  {
+    "text": "Добавь БЖУ чтобы я считал",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "БЖУ",
+          "scheduling_type": "unscheduled",
+          "needs_clarification": true,
+          "clarification_reason": "ambiguous_entity_kind"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Сделай отдельный трекер питания",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Сегодня мало сил",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "today",
+      "energy_level": "low",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Оставь только главное",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Зал отменяется, в 19 созвон, проект перенеси на завтра",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_count": 3,
+      "tasks_match": [
+        {
+          "title_contains": "зал",
+          "operation": "cancel",
+          "referenced_task_title": "Зал"
+        },
+        {
+          "title_contains": "созвон",
+          "operation": "create",
+          "scheduling_type": "fixed",
+          "fixed_start": "19:00"
+        },
+        {
+          "title_contains": "проект",
+          "operation": "update",
+          "target_date": "tomorrow",
+          "referenced_task_title": "проект"
         }
       ]
     }

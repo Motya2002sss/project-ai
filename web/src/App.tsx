@@ -55,12 +55,17 @@ function formatToday(value: Date): string {
   return formatted.charAt(0).toUpperCase() + formatted.slice(1);
 }
 
-function formatTaskDate(value: string): string {
-  const today = new Date();
+function dateFromValue(value: string): Date {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
+function formatTaskDate(value: string, referenceDate = localDateValue()): string {
+  const today = dateFromValue(referenceDate);
   const tomorrow = new Date(today);
   tomorrow.setDate(tomorrow.getDate() + 1);
 
-  if (value === localDateValue(today)) {
+  if (value === referenceDate) {
     return "сегодня";
   }
 
@@ -128,6 +133,7 @@ function buildPlanUpdate(
   const nextById = new Map(nextTasks.map((task) => [task.id, task]));
   const affectedById = new Map(response.affected_tasks.map((task) => [task.id, task]));
   const nextPlacements = placementsFromPlan(nextPlan);
+  const snapshotDate = response.day_snapshot?.date || nextPlan?.date || localDateValue();
   const changes: PlanChange[] = [];
 
   const taskForId = (taskId: number): Task | undefined =>
@@ -144,8 +150,8 @@ function buildPlanUpdate(
       title: task.title,
       detail: placement?.startTime
         ? placement.startTime.slice(0, 5)
-        : task.target_date !== localDateValue()
-          ? formatTaskDate(task.target_date)
+        : task.target_date !== snapshotDate
+          ? formatTaskDate(task.target_date, snapshotDate)
           : null
     });
   }
@@ -159,7 +165,9 @@ function buildPlanUpdate(
     changes.push({
       kind: "moved",
       title: task.title,
-      detail: previous?.target_date !== task.target_date ? formatTaskDate(task.target_date) : "обновлено"
+      detail: previous?.target_date !== task.target_date
+        ? formatTaskDate(task.target_date, snapshotDate)
+        : "обновлено"
     });
   }
 
@@ -203,14 +211,21 @@ function buildPlanUpdate(
     unsupported_capability: "Функция пока недоступна",
     failed: "Не получилось обновить план"
   };
+  const statusMessage = ["no_change", "unsupported_capability", "failed"].includes(response.status)
+    ? response.reply_text
+    : null;
 
   return {
     title: titles[response.status] || "План обновлён",
-    message: response.clarification_question || (goalOnly
-      ? "Цели обновлены. Они будут учитываться в следующих планах."
-      : limitedChanges.length === 0
-        ? "День актуализирован без дополнительных изменений в задачах."
-        : null),
+    message: response.clarification?.question
+      || response.confirmation?.summary
+      || response.conflict_details?.message
+      || statusMessage
+      || (goalOnly
+        ? "Цели обновлены. Они будут учитываться в следующих планах."
+        : limitedChanges.length === 0
+          ? "День актуализирован без дополнительных изменений в задачах."
+          : null),
     changes: limitedChanges
   };
 }
@@ -242,8 +257,9 @@ export default function App() {
   const highlightTimer = useRef<number | null>(null);
   const { plan, tasks, goals, taskPlacements } = day;
 
-  const todayValue = localDateValue(currentDate);
-  const todayText = formatToday(currentDate);
+  const localTodayValue = localDateValue(currentDate);
+  const todayValue = plan?.date || localTodayValue;
+  const todayText = formatToday(dateFromValue(todayValue));
   const todayTasks = useMemo(
     () => tasks.filter((task) => task.target_date === todayValue),
     [tasks, todayValue]
@@ -297,7 +313,7 @@ export default function App() {
     nextUserId = userId,
     options: { initial?: boolean; resetPlacements?: boolean } = {}
   ): Promise<DaySnapshot | null> {
-    const loadKey = `${nextUserId}:${todayValue}`;
+    const loadKey = `${nextUserId}:${localTodayValue}`;
     activeLoadKey.current = loadKey;
 
     if (options.initial) {
@@ -366,7 +382,7 @@ export default function App() {
         setRefreshNotice("Не удалось загрузить день. Проверь подключение и попробуй ещё раз.");
       }
     });
-  }, [todayValue, userId]);
+  }, [localTodayValue, userId]);
 
   useEffect(() => () => {
     submitAbortController.current?.abort();

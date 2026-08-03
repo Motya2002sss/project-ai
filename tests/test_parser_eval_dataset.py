@@ -89,6 +89,9 @@ def test_strict_eval_detects_fallback_as_failure(monkeypatch):
     assert result["passed"] == 0
     assert result["failed"] == 1
     assert result["fallback_count"] == 1
+    assert result["latency_total_seconds"] >= 0
+    assert result["latency_avg_ms"] >= 0
+    assert result["latency_p95_ms"] >= 0
     assert result["failures"][0][2] == "fallback"
 
 

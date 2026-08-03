@@ -3,6 +3,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from time import perf_counter
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
@@ -158,6 +159,19 @@ def _case_passes(parsed, expected: dict) -> bool:
         if not _contains_all(titles, expected["tasks_contains"]):
             return False
 
+    if "tasks_count" in expected and len(parsed.tasks) != expected["tasks_count"]:
+        return False
+
+    if "task_titles_exclude" in expected:
+        excluded = [_normalize_match_text(value) for value in expected["task_titles_exclude"]]
+
+        if any(
+            token and token in _normalize_match_text(task.title)
+            for task in parsed.tasks
+            for token in excluded
+        ):
+            return False
+
     if "tasks_match" in expected and not _tasks_match(parsed.tasks, expected["tasks_match"]):
         return False
 
@@ -188,10 +202,13 @@ def _case_passes(parsed, expected: dict) -> bool:
 def evaluate_cases(cases: list[dict], strict_llm: bool) -> dict:
     failures = []
     fallback_count = 0
+    latencies_ms = []
     model = settings.llm_model if settings.llm_enabled and settings.llm_provider != "mock" else "mock"
 
     for index, case in enumerate(cases, start=1):
+        started_at = perf_counter()
         parsed = parse_user_message(case["text"])
+        latencies_ms.append((perf_counter() - started_at) * 1000)
         expected = case["expected"]
         used_fallback = parsed.used_fallback
 
@@ -207,6 +224,8 @@ def evaluate_cases(cases: list[dict], strict_llm: bool) -> dict:
 
     total = len(cases)
     passed = total - len(failures)
+    sorted_latencies = sorted(latencies_ms)
+    p95_index = max(0, min(len(sorted_latencies) - 1, round(len(sorted_latencies) * 0.95) - 1))
 
     return {
         "total": total,
@@ -216,6 +235,9 @@ def evaluate_cases(cases: list[dict], strict_llm: bool) -> dict:
         "provider": settings.llm_provider,
         "model": model or "mock",
         "strict_llm": strict_llm,
+        "latency_total_seconds": sum(latencies_ms) / 1000,
+        "latency_avg_ms": sum(latencies_ms) / len(latencies_ms) if latencies_ms else 0,
+        "latency_p95_ms": sorted_latencies[p95_index] if sorted_latencies else 0,
         "failures": failures,
     }
 
@@ -245,6 +267,9 @@ def main() -> None:
     print(f"passed: {result['passed']}")
     print(f"failed: {result['failed']}")
     print(f"fallback_count: {result['fallback_count']}")
+    print(f"latency_total_seconds: {result['latency_total_seconds']:.3f}")
+    print(f"latency_avg_ms: {result['latency_avg_ms']:.1f}")
+    print(f"latency_p95_ms: {result['latency_p95_ms']:.1f}")
 
     for index, text, reason, expected, actual in result["failures"]:
         print(f"\nCase {index} failed")

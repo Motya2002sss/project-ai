@@ -354,7 +354,7 @@ def _task_mutation_reply(
     return (
         "Принял. План обновлён по фактическим изменениям.\n\n"
         + "\n\n".join(sections)
-        + f"\n\n{format_day_plan(day_plan)}{_planning_context_hint(user)}"
+        + f"\n\n{format_day_plan(day_plan, user=user)}{_planning_context_hint(user)}"
     )
 
 
@@ -644,7 +644,7 @@ def _process_parsed_user_message(
             raise
 
         day_plan = plan_result.day_plan
-        plan_text = format_day_plan(day_plan)
+        plan_text = format_day_plan(day_plan, user=user)
         task_lines = "\n".join(f"- {task.title}" for task in tasks)
         prefix = f"Добавил задачи по целям:\n\n{task_lines}" if tasks else "Задачи по целям уже есть в активном плане."
         reply_text = f"{prefix}\n\nПлан дня:\n\n{plan_text}{_planning_context_hint(user)}"
@@ -686,7 +686,10 @@ def _process_parsed_user_message(
 
     if parsed_message.intent == "show_plan":
         day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
-        reply_text = f"Текущий план дня:\n\n{format_day_plan(day_plan)}{_planning_context_hint(user)}"
+        reply_text = (
+            f"Текущий план дня:\n\n{format_day_plan(day_plan, user=user)}"
+            f"{_planning_context_hint(user)}"
+        )
         return _base_response(
             user_external_id,
             source,
@@ -806,7 +809,7 @@ def _process_parsed_user_message(
             raise
 
         day_plan = plan_result.day_plan
-        plan_text = format_day_plan(day_plan)
+        plan_text = format_day_plan(day_plan, user=user)
         done_text = "\n".join(f"- {task.title}" for task in done_tasks) or "ничего не отметил"
         skipped_text = "\n".join(f"- {task.title}" for task in skipped_tasks) or "нет"
         reply_text = (
@@ -864,7 +867,7 @@ def _process_parsed_user_message(
         day_plan = plan_result.day_plan
         reply_text = (
             "Ок, перепланировал день с учетом изменений:\n\n"
-            f"{format_day_plan(day_plan)}{_planning_context_hint(user)}"
+            f"{format_day_plan(day_plan, user=user)}{_planning_context_hint(user)}"
         )
         return _base_response(
             user_external_id,
@@ -1819,7 +1822,7 @@ def _attach_day_snapshot(
     response: MessageResponse,
     parsed_message: ParsedUserMessage,
 ) -> None:
-    plan_date = response.plan_summary.date if response.plan_summary else get_plan_date(parsed_message, user=user)
+    plan_date = get_plan_date(user=user)
     day_plan = (
         db.query(DayPlan)
         .filter(DayPlan.user_id == user.id, DayPlan.date == plan_date)
@@ -1829,7 +1832,8 @@ def _attach_day_snapshot(
     if day_plan is None:
         day_plan = rebuild_day_plan(db=db, user=user, plan_date=plan_date)
 
-    response.plan_summary = plan_to_response(day_plan)
+    if response.plan_summary is None:
+        response.plan_summary = plan_to_response(day_plan)
     response.day_snapshot = day_snapshot_to_response(db, user, day_plan)
 
 

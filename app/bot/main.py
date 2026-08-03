@@ -130,7 +130,7 @@ async def plan_command(message: Message) -> None:
     with SessionLocal() as db:
         user = get_or_create_user(db=db, telegram_id=telegram_user.id, name=telegram_user.full_name)
         day_plan = rebuild_today_plan(db=db, user=user)
-        plan_text = format_day_plan(day_plan)
+        plan_text = format_day_plan(day_plan, user=user)
         hint = _planning_context_hint(user)
 
     await message.answer(f"Текущий план дня:\n\n{plan_text}{hint}")
@@ -162,7 +162,7 @@ async def done_command(message: Message) -> None:
             return
 
         day_plan = rebuild_today_plan(db=db, user=user)
-        plan_text = format_day_plan(day_plan)
+        plan_text = format_day_plan(day_plan, user=user)
         hint = _planning_context_hint(user)
 
     await message.answer(

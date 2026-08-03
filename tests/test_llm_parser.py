@@ -629,6 +629,111 @@ def test_llm_content_polishes_mixed_profile_text_without_hallucinated_tasks():
     assert parsed.tasks == []
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Сделай отдельный трекер питания",
+        "Оставь только главное",
+    ],
+)
+def test_llm_content_does_not_turn_capabilities_or_day_context_into_tasks(text: str):
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": text,
+                        "operation": "create",
+                        "scheduling_type": "flexible",
+                        "estimated_minutes": 60,
+                    }
+                ],
+            }
+        ),
+        text=text,
+    )
+
+    assert parsed.intent == "add_tasks"
+    assert parsed.tasks == []
+
+
+def test_llm_content_uses_deterministic_routine_semantics():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "update_profile",
+                "tasks": [
+                    {
+                        "title": "учить английский",
+                        "operation": "create",
+                        "scheduling_type": "unscheduled",
+                        "preferred_window": "evening",
+                        "recurrence_hint": "по будням",
+                    }
+                ],
+            }
+        ),
+        text="По будням учить английский вечером",
+    )
+
+    assert parsed.intent == "add_tasks"
+    assert parsed.tasks[0].recurrence_hint == "по будням"
+    assert parsed.tasks[0].preferred_window == "evening"
+
+
+def test_llm_content_keeps_explicit_duration_task_flexible():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "Работа над проектом",
+                        "operation": "create",
+                        "scheduling_type": "unscheduled",
+                        "estimated_minutes": 40,
+                        "needs_clarification": True,
+                        "clarification_reason": "missing_time_and_target",
+                    }
+                ],
+            }
+        ),
+        text="Проект 40 минут",
+    )
+
+    assert parsed.tasks[0].scheduling_type == "flexible"
+    assert parsed.tasks[0].estimated_minutes == 40
+    assert parsed.tasks[0].needs_clarification is False
+    assert parsed.tasks[0].clarification_reason is None
+
+
+def test_llm_content_splits_multi_action_into_deterministic_operations():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "date": "tomorrow",
+                "tasks": [
+                    {
+                        "title": "Зал и созвон",
+                        "operation": "cancel",
+                        "target_date": "tomorrow",
+                    }
+                ],
+            }
+        ),
+        text="Зал отменяется, в 19 созвон, проект перенеси на завтра",
+    )
+
+    assert parsed.date is None
+    assert [task.operation for task in parsed.tasks] == ["cancel", "create", "update"]
+    assert parsed.tasks[0].referenced_task_title == "Зал"
+    assert parsed.tasks[1].fixed_start == "19:00"
+    assert parsed.tasks[2].target_date == "tomorrow"
+    assert parsed.tasks[2].referenced_task_title == "проект"
+
+
 def test_parsed_user_message_accepts_valid_llm_shape():
     parsed = ParsedUserMessage.model_validate(
         {

@@ -6,11 +6,26 @@ from app.llm.schemas import ParsedTask, ParsedUserMessage
 
 COMMAND_PREFIX_RE = re.compile(
     r"^(?:(?:пожалуйста|мне)\s+)*(?:добавь|добавить|создай|создать|запиши|записать|"
-    r"поставь|поставить|напомни|напомнить)\s+(?:(?:мне\s+)?(?:задачу|дело)\s+)?",
+    r"поставь|поставить|напомни|напомнить)\s+(?:мне\s+)?(?:(?:задачу|дело)\s+)?",
+    re.IGNORECASE,
+)
+INTENT_PREFIX_RE = re.compile(
+    r"^(?:(?:я|мне)\s+)?(?:хочу|планирую|собираюсь|нужно|надо)\s+(?:мне\s+)?",
     re.IGNORECASE,
 )
 REPLAN_SUFFIX_RE = re.compile(
     r"\s+и\s+(?:оставь|оставить|сохрани|сохранить)\s+(?:только\s+)?(?:главное|важное).*$",
+    re.IGNORECASE,
+)
+SCHEDULING_DATE_RE = re.compile(r"\b(?:сегодня|завтра|на\s+сегодня|на\s+завтра)\b", re.IGNORECASE)
+SCHEDULING_TIME_RE = re.compile(r"\b(?:в|на)\s*\d{1,2}(?::\d{2})?\b", re.IGNORECASE)
+SCHEDULING_DURATION_RE = re.compile(
+    r"\b(?:(?:на\s+)(?:\d+(?:[.,]\d+)?\s*)?|(?:\d+(?:[.,]\d+)?\s*))"
+    r"(?:минут(?:у|ы)?|мин|час(?:а|ов)?|полчаса)\b",
+    re.IGNORECASE,
+)
+ORPHAN_DURATION_SUFFIX_RE = re.compile(
+    r"\s+(?:минут(?:у|ы)?|мин|час(?:а|ов)?|полчаса)$",
     re.IGNORECASE,
 )
 CAPABILITY_RE = re.compile(
@@ -66,6 +81,13 @@ def normalize_task_title(value: str) -> str:
     title = _normalize_spaces(value)
     title = COMMAND_PREFIX_RE.sub("", title)
     title = REPLAN_SUFFIX_RE.sub("", title)
+    title = SCHEDULING_DATE_RE.sub(" ", title)
+    title = SCHEDULING_TIME_RE.sub(" ", title)
+    title = SCHEDULING_DURATION_RE.sub(" ", title)
+    title = ORPHAN_DURATION_SUFFIX_RE.sub("", title)
+    title = _normalize_spaces(title)
+    title = COMMAND_PREFIX_RE.sub("", title)
+    title = INTENT_PREFIX_RE.sub("", title)
     title = _normalize_spaces(title)
 
     if not title:
@@ -157,11 +179,8 @@ def detect_tracking_ambiguity(
 
 
 def is_low_energy_replan_request(text: str, parsed_message: ParsedUserMessage) -> bool:
-    if parsed_message.energy_level != "low":
-        return False
-
     normalized = text.lower().replace("ё", "е")
-    return any(
+    asks_to_reduce = any(
         phrase in normalized
         for phrase in [
             "оставь только главное",
@@ -170,6 +189,10 @@ def is_low_energy_replan_request(text: str, parsed_message: ParsedUserMessage) -
             "оставить только важное",
             "убери лишнее",
         ]
+    )
+
+    return asks_to_reduce and (
+        parsed_message.energy_level == "low" or not parsed_message.tasks
     )
 
 

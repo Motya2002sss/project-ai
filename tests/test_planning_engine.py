@@ -14,18 +14,41 @@ from app.llm.schemas import ParsedUserMessage
 from app.models.task import Task
 from app.models.user import User
 from app.services.message_service import process_user_message
+from app.services.message_policy import normalize_task_title
 from app.services.planning_service import (
     TimeInterval,
     assert_plan_has_no_overlaps,
     build_day_plan_result,
     choose_best_slot,
     find_available_slots,
+    format_plan_date,
 )
 
 
 UTC = timezone.utc
 TEST_DATE = date(2026, 8, 3)
 TEST_NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("raw_title", "expected"),
+    [
+        ("Сегодня в 22:00 теннис на 30 минут", "Теннис"),
+        ("Теннис минут", "Теннис"),
+        ("Час тишины", "Час тишины"),
+        ("Сегодня хочу проверить бюджет на 60 минут", "Проверить бюджет"),
+        ("Планирую подготовиться к экзамену", "Подготовиться к экзамену"),
+    ],
+)
+def test_task_title_removes_only_scheduling_metadata(raw_title: str, expected: str):
+    assert normalize_task_title(raw_title) == expected
+
+
+def test_plan_date_label_uses_user_timezone(db: Session):
+    user = create_user(db)
+
+    assert format_plan_date(TEST_DATE, user=user) == "сегодня"
+    assert format_plan_date(TEST_DATE + timedelta(days=1), user=user) == "завтра"
 
 
 def dt(hour: int, minute: int = 0) -> datetime:
@@ -391,3 +414,30 @@ def test_complete_cancel_move_and_extend_do_not_create_duplicates(db: Session):
     assert cancel_response.plan_diff.cancelled_task_ids == [tasks[1].id]
     assert move_response.plan_diff.updated_task_ids == [tasks[2].id]
     assert extend_response.plan_diff.updated_task_ids == [tasks[2].id]
+
+
+def test_multi_action_message_applies_each_clause_without_cross_date_leak(db: Session):
+    process_user_message(db, "multi-action-user", "Сегодня хочу сходить в зал", "web_text")
+    process_user_message(db, "multi-action-user", "Сегодня хочу поделать проект", "web_text")
+
+    response = process_user_message(
+        db,
+        "multi-action-user",
+        "Зал отменяется, в 19 созвон, проект перенеси на завтра",
+        "web_text",
+    )
+    tasks = db.query(Task).order_by(Task.id).all()
+    gym = next(task for task in tasks if task.title == "Сходить в зал")
+    project = next(task for task in tasks if task.title == "Поделать проект")
+    call = next(task for task in tasks if task.title == "Созвон")
+
+    assert response.status == "applied"
+    assert len(tasks) == 3
+    assert gym.status == "cancelled"
+    assert project.target_date == TEST_DATE + timedelta(days=1)
+    assert call.target_date == TEST_DATE
+    assert call.fixed_start == time(hour=19)
+    assert_plan_has_no_overlaps(
+        build_day_plan_result(db, gym.user, plan_date=TEST_DATE, now=TEST_NOW).day_plan,
+        gym.user,
+    )

@@ -73,6 +73,14 @@ SYSTEM_PROMPT = """
 
 Правила извлечения:
 - parser описывает смысл и ограничения, но не выбирает окончательный свободный слот: backend сам проверяет доступность и рассчитывает расписание;
+- title должен быть коротким каноническим названием действия без служебных слов "добавь", "создай задачу", "запиши мне", даты, времени и длительности;
+- запрос продуктовой функции, экрана, интеграции или отдельного трекера не является задачей: intent=add_tasks, tasks=[]; backend вернёт unsupported_capability;
+- если непонятно, просит пользователь разовую задачу, routine или отдельный трекер, не угадывай: создай только безопасную unscheduled task-кандидатуру с needs_clarification=true и clarification_reason="ambiguous_entity_kind";
+- явная периодичность "каждый день", "ежедневно", "по будням", "по понедельникам" или "регулярно" заполняет recurrence_hint; если время суток не указано, needs_clarification=true и clarification_reason="missing_routine_time";
+- описание существующей привычки вроде "обычно" или "хожу" неоднозначно: recurrence_hint + needs_clarification=true + clarification_reason="ambiguous_recurrence";
+- сообщение только о контексте дня, например "Сегодня мало сил" или "Оставь только главное", не превращай в task; сохрани metadata и верни tasks=[];
+- если в одном сообщении несколько действий, верни отдельный task operation для каждого; не склеивай отмену, fixed event и перенос в один title;
+- в multi-action message дата относится только к тому clause, где она названа; если clauses имеют разные или неуказанные даты, top-level date=null, а target_date заполняется у конкретной task operation;
 - новая задача => operation=create;
 - перенос или изменение существующей задачи => operation=update и referenced_task_title;
 - отмена существующей задачи => operation=cancel и referenced_task_title; не создавай задачу с текстом "отменяется";

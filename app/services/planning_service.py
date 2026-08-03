@@ -218,8 +218,8 @@ def get_plan_date(
     return resolve_target_date(date_value, user=user, now=now)
 
 
-def format_plan_date(plan_date: date) -> str:
-    today = date.today()
+def format_plan_date(plan_date: date, user: User | None = None) -> str:
+    today = resolve_target_date(None, user=user)
 
     if plan_date == today:
         return "сегодня"
@@ -725,14 +725,14 @@ def rebuild_today_plan(db: Session, user: User) -> DayPlan:
     return rebuild_day_plan(db=db, user=user, parsed_message=None)
 
 
-def format_day_plan(day_plan: DayPlan) -> str:
+def format_day_plan(day_plan: DayPlan, user: User | None = None) -> str:
     items = list(day_plan.items)
     scheduled_items = sorted(
         [item for item in items if item.status in {"planned", "done"} and item.start_time],
         key=lambda item: item.start_time or time.min,
     )
     not_scheduled_items = [item for item in items if item.status == "not_scheduled"]
-    lines: list[str] = [f"План на {format_plan_date(day_plan.date)}:"]
+    lines: list[str] = [f"План на {format_plan_date(day_plan.date, user=user)}:"]
 
     if day_plan.budget_limit:
         lines.append(f"Бюджет: {day_plan.budget_limit} ₽")

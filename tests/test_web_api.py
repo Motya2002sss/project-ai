@@ -419,7 +419,25 @@ def test_message_returns_atomic_day_snapshot(client: TestClient):
     assert snapshot["plan"] == payload["plan_summary"]
     assert snapshot["tasks"] == payload["affected_tasks"]
     assert snapshot["progress"] == {"done": 0, "total": 1}
-    assert snapshot["scheduled_items"][0]["task_id"] == snapshot["tasks"][0]["id"]
+    snapshot_items = snapshot["scheduled_items"] + snapshot["unscheduled_items"]
+    assert [item["task_id"] for item in snapshot_items] == [snapshot["tasks"][0]["id"]]
+
+
+def test_tomorrow_mutation_keeps_message_snapshot_on_user_today(client: TestClient):
+    today = client.get("/api/day/tomorrow-snapshot-user?date=today").json()
+    response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "tomorrow-snapshot-user",
+            "request_id": "tomorrow-snapshot-request",
+            "text": "Завтра хочу позаниматься математикой",
+        },
+    ).json()
+
+    assert response["affected_tasks"][0]["target_date"] != today["date"]
+    assert response["plan_summary"]["date"] == response["affected_tasks"][0]["target_date"]
+    assert response["day_snapshot"]["date"] == today["date"]
+    assert response["day_snapshot"]["tasks"] == []
 
 
 def test_ambiguous_tracking_request_uses_persistent_clarification(client: TestClient):
@@ -560,8 +578,12 @@ def test_conflict_context_accepts_a_different_fixed_time(client: TestClient):
     ).json()
 
     assert resolved["status"] == "applied"
-    starts = [item["start_time"] for item in resolved["day_snapshot"]["scheduled_items"]]
+    assert resolved["day_snapshot"]["scheduled_items"] == []
+    starts = [item["start_time"] for item in resolved["plan_summary"]["items"]]
     assert starts == ["19:00:00", "20:00:00"]
+
+    tomorrow = client.get("/api/day/conflict-context-user?date=tomorrow").json()
+    assert [item["start_time"] for item in tomorrow["scheduled_items"]] == starts
 
 
 def test_repeated_day_snapshot_read_keeps_plan_version(client: TestClient):
@@ -633,3 +655,42 @@ def test_low_energy_replan_requires_confirmation_before_moving_tasks(client: Tes
     assert applied["day_snapshot"]["tasks"][0]["estimated_minutes"] == 100
     tomorrow = client.get(f"/api/tasks/{user_id}?date=tomorrow").json()
     assert {task["title"] for task in tomorrow} == {"Разобрать почту", "Купить продукты"}
+
+
+def test_low_energy_context_can_be_used_by_follow_up_replan(client: TestClient):
+    user_id = "low-energy-follow-up-user"
+
+    for index, text in enumerate(
+        ["Сегодня подготовиться к экзамену", "Сегодня разобрать почту"],
+        start=1,
+    ):
+        client.post(
+            "/api/message",
+            json={
+                "user_external_id": user_id,
+                "request_id": f"low-energy-follow-up-setup-{index}",
+                "text": text,
+            },
+        )
+
+    context = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_id,
+            "request_id": "low-energy-follow-up-context",
+            "text": "Сегодня мало сил",
+        },
+    ).json()
+    proposal = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_id,
+            "request_id": "low-energy-follow-up-proposal",
+            "text": "Оставь только главное",
+        },
+    ).json()
+
+    assert context["day_snapshot"]["day_context"]["energy_level"] == "low"
+    assert context["day_snapshot"]["tasks"]
+    assert proposal["status"] == "confirmation_required"
+    assert len(proposal["day_snapshot"]["tasks"]) == 2
