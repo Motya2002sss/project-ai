@@ -11,6 +11,7 @@ from app.llm.parser import parse_user_message
 from app.llm.schemas import ParsedTask, ParsedUserMessage
 from app.models.day_plan import DayPlan
 from app.models.goal import Goal
+from app.models.routine import Routine
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.api import (
@@ -29,6 +30,7 @@ from app.schemas.api import (
     PlanItemResponse,
     PlanResponse,
     ProfileResponse,
+    RoutineResponse,
     TaskResponse,
 )
 from app.services.goal_service import (
@@ -52,8 +54,10 @@ from app.services.message_policy import (
     interaction_option,
     is_cancel_message,
     is_capability_request,
+    is_explicit_routine_request,
     is_low_energy_replan_request,
     normalize_parsed_tasks,
+    normalize_routine_title,
     task_for_one_time_tracking,
 )
 from app.services.planning_service import (
@@ -64,6 +68,7 @@ from app.services.planning_service import (
     get_plan_date,
     rebuild_day_plan,
 )
+from app.services.routine_service import create_routine, list_active_routines
 from app.services.task_service import (
     TaskMutationResult,
     apply_parsed_task_operations,
@@ -131,6 +136,8 @@ def task_to_response(task: Task) -> TaskResponse:
         deadline=task.deadline,
         is_locked=task.is_locked,
         status=task.status,
+        routine_id=task.routine_id,
+        occurrence_date=task.occurrence_date,
     )
 
 
@@ -141,6 +148,21 @@ def goal_to_response(goal: Goal) -> GoalResponse:
         category=goal.category,
         priority=goal.priority,
         status=goal.status,
+    )
+
+
+def routine_to_response(routine: Routine) -> RoutineResponse:
+    return RoutineResponse(
+        id=routine.id,
+        title=routine.title,
+        cadence=routine.cadence,
+        weekdays=routine.weekdays or [],
+        fixed_time=routine.fixed_time,
+        preferred_window=routine.preferred_window,
+        estimated_minutes=routine.estimated_minutes,
+        start_date=routine.start_date,
+        end_date=routine.end_date,
+        active=routine.active,
     )
 
 
@@ -189,6 +211,7 @@ def day_snapshot_to_response(
     plan = plan_to_response(day_plan)
     tasks = list_user_tasks(db=db, user=user, target_date=day_plan.date)
     goals = list_active_goals(db=db, user=user)
+    routines = list_active_routines(db=db, user=user)
     task_responses = [task_to_response(task) for task in tasks]
     done_count = sum(task.status == "done" for task in tasks)
     scheduled_items = [
@@ -212,6 +235,7 @@ def day_snapshot_to_response(
         ),
         tasks=task_responses,
         goals=[goal_to_response(goal) for goal in goals],
+        routines=[routine_to_response(routine) for routine in routines],
         plan=plan,
         plan_version=day_plan.version,
     )
@@ -342,6 +366,7 @@ def _base_response(
     *,
     affected_tasks: list[Task] | None = None,
     affected_goals: list[Goal] | None = None,
+    affected_routines: list[Routine] | None = None,
     user: User | None = None,
     day_plan: DayPlan | None = None,
     status: str = "applied",
@@ -367,6 +392,7 @@ def _base_response(
         summary=reply_text,
         affected_tasks=[task_to_response(task) for task in affected_tasks or []],
         affected_goals=[goal_to_response(goal) for goal in affected_goals or []],
+        affected_routines=[routine_to_response(routine) for routine in affected_routines or []],
         profile=profile_to_response(user, user_external_id) if user else None,
         plan_summary=plan_to_response(day_plan) if day_plan else None,
         plan_diff=plan_diff or PlanDiffResponse(),
@@ -969,15 +995,27 @@ def _create_routine_confirmation(
     parsed_message: ParsedUserMessage,
     *,
     title: str,
-    preferred_window: str,
+    preferred_window: str | None = None,
+    fixed_time: time | None = None,
+    cadence: str = "daily",
+    weekdays: list[int] | None = None,
 ) -> MessageResponse:
     window_labels = {
         "morning": "утром",
         "afternoon": "днём",
         "evening": "вечером",
     }
-    window_label = window_labels.get(preferred_window, preferred_window)
-    summary = f"{title}. Каждый день · {window_label}."
+    schedule_label = (
+        f"в {fixed_time.strftime('%H:%M')}"
+        if fixed_time
+        else window_labels.get(preferred_window or "", preferred_window or "без точного времени")
+    )
+    cadence_label = {
+        "daily": "каждый день",
+        "weekdays": "по будням",
+        "selected_weekdays": "в выбранные дни",
+    }.get(cadence, cadence)
+    summary = f"{title}. {cadence_label.capitalize()} · {schedule_label}."
     options = [
         {"id": "apply", "label": "Применить", "value": "применить"},
         {"id": "edit", "label": "Изменить", "value": "изменить"},
@@ -992,11 +1030,13 @@ def _create_routine_confirmation(
         original_message=parsed_message.raw_text or title,
         context={
             "flow": "create_routine",
-            "title": "Добавить ежедневное напоминание?",
+            "title": "Добавить регулярное напоминание?",
             "summary": summary,
             "routine_title": title,
-            "cadence": "daily",
+            "cadence": cadence,
+            "weekdays": weekdays or [],
             "preferred_window": preferred_window,
+            "fixed_time": fixed_time.isoformat() if fixed_time else None,
             "parsed_message": parsed_message.model_dump(mode="json"),
         },
         question=summary,
@@ -1011,6 +1051,187 @@ def _create_routine_confirmation(
         f"{confirmation.title}\n\n{confirmation.summary}",
         status="confirmation_required",
         confirmation=confirmation,
+    )
+
+
+def _routine_schedule_from_text(text: str) -> tuple[str, list[int]]:
+    lowered = text.lower().replace("ё", "е")
+
+    if "по будням" in lowered:
+        return "weekdays", []
+
+    weekday_names = {
+        "понедель": 0,
+        "вторник": 1,
+        "сред": 2,
+        "четверг": 3,
+        "пятниц": 4,
+        "суббот": 5,
+        "воскрес": 6,
+    }
+    selected = sorted({value for name, value in weekday_names.items() if name in lowered})
+
+    if selected:
+        return "selected_weekdays", selected
+
+    return "daily", []
+
+
+def _routine_time_options() -> list[dict[str, str]]:
+    return [
+        {"id": "morning", "label": "Утром", "value": "утром"},
+        {"id": "afternoon", "label": "Днём", "value": "днём"},
+        {"id": "evening", "label": "Вечером", "value": "вечером"},
+        {"id": "exact_time", "label": "Указать точное время", "value": "точное время"},
+        {"id": "cancel", "label": "Отмена", "value": "отмена"},
+    ]
+
+
+def _build_explicit_routine_interaction(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse | None:
+    if not is_explicit_routine_request(parsed_message.raw_text or ""):
+        return None
+
+    recurring = next((task for task in parsed_message.tasks if task.recurrence_hint), None)
+
+    if recurring is None:
+        return None
+
+    title = normalize_routine_title(recurring.title)
+    cadence, weekdays = _routine_schedule_from_text(parsed_message.raw_text or "")
+
+    fixed_time = recurring.fixed_start or _fixed_time_from_text(parsed_message.raw_text or "")
+
+    if recurring.preferred_window or fixed_time:
+        return _create_routine_confirmation(
+            db,
+            user,
+            user_external_id,
+            source,
+            parsed_message,
+            title=title,
+            preferred_window=recurring.preferred_window,
+            fixed_time=fixed_time,
+            cadence=cadence,
+            weekdays=weekdays,
+        )
+
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="clarification",
+        original_message=parsed_message.raw_text or title,
+        context={
+            "flow": "tracking_time",
+            "routine_title": title,
+            "cadence": cadence,
+            "weekdays": weekdays,
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question="Когда лучше напоминать?",
+        options=_routine_time_options(),
+    )
+    return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+
+def _apply_routine_confirmation(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+    interaction,
+) -> MessageResponse:
+    user = db.query(User).filter(User.id == user.id).with_for_update().one()
+    plan_date = get_plan_date(parsed_message, user=user)
+
+    if interaction.base_plan_version != _current_plan_version(db, user, plan_date):
+        resolve_interaction(db, interaction, status="stale")
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            "План уже изменился. Повтори запрос, и я соберу актуальное предложение.",
+            status="no_change",
+        )
+
+    context = interaction.context or {}
+    before = _snapshot_plan_placements(db, user)
+
+    try:
+        resolve_interaction(db, interaction, commit=False)
+        creation = create_routine(
+            db,
+            user,
+            title=context["routine_title"],
+            cadence=context.get("cadence", "daily"),
+            weekdays=context.get("weekdays") or [],
+            fixed_time=(
+                time.fromisoformat(context["fixed_time"])
+                if context.get("fixed_time")
+                else None
+            ),
+            preferred_window=context.get("preferred_window"),
+            estimated_minutes=10,
+            start_date=plan_date,
+            commit=False,
+        )
+        plan_result = build_day_plan_result(
+            db=db,
+            user=user,
+            plan_date=plan_date,
+            commit=False,
+        )
+
+        if plan_result.conflicts:
+            db.rollback()
+            message = plan_result.conflicts[0].message
+            return _base_response(
+                user_external_id,
+                source,
+                parsed_message,
+                message,
+                status="conflict",
+                clarification_question=message,
+                plan_diff=PlanDiffResponse(conflict=message),
+            )
+
+        mutation = TaskMutationResult(
+            created=creation.occurrences,
+            affected_dates={plan_date},
+        )
+        plan_diff = _build_plan_diff(db, user, mutation, before, [plan_result])
+
+        if creation.created:
+            plan_diff.created_routine_ids.append(creation.routine.id)
+
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    status = "applied" if creation.created or creation.occurrences else "no_change"
+    reply = (
+        f"Добавил напоминание: {creation.routine.title}."
+        if creation.created
+        else "Такое напоминание уже существует. План не изменён."
+    )
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        reply,
+        affected_tasks=creation.occurrences,
+        affected_routines=[creation.routine],
+        day_plan=plan_result.day_plan,
+        plan_diff=plan_diff,
+        status=status,
     )
 
 
@@ -1206,13 +1427,17 @@ def _preferred_window_from_text(text: str, option_id: str | None = None) -> str 
 
 
 def _fixed_time_from_text(text: str) -> str | None:
-    match = re.search(r"\b(?:в|на)?\s*(\d{1,2})(?::(\d{2}))\b", text)
+    match = re.search(
+        r"(?:\b(?:в|на)\s*(\d{1,2})(?::(\d{2}))?\b|^\s*(\d{1,2})(?::(\d{2}))?\s*$)",
+        text,
+        re.IGNORECASE,
+    )
 
     if not match:
         return None
 
-    hour = int(match.group(1))
-    minute = int(match.group(2))
+    hour = int(match.group(1) or match.group(3))
+    minute = int(match.group(2) or match.group(4) or 0)
 
     if hour > 23 or minute > 59:
         return None
@@ -1270,7 +1495,10 @@ def _handle_pending_interaction(
         lowered = text.lower().replace("ё", "е")
 
         if selected is None:
-            if re.search(r"\b(?:ежеднев|каждый день|регуляр|напоминай)\b", lowered):
+            if re.search(
+                r"\b(?:ежеднев\w*|кажд\w*\s+день|регуляр\w*|напоминай\w*)\b",
+                lowered,
+            ):
                 selected = "routine"
             elif re.search(r"\b(?:разов|один раз|на сегодня)\b", lowered):
                 selected = "one_time"
@@ -1305,8 +1533,9 @@ def _handle_pending_interaction(
 
         if selected == "routine":
             preferred_window = _preferred_window_from_text(text)
+            fixed_time = _fixed_time_from_text(text)
 
-            if preferred_window:
+            if preferred_window or fixed_time:
                 return _create_routine_confirmation(
                     db,
                     user,
@@ -1315,14 +1544,9 @@ def _handle_pending_interaction(
                     parsed_message,
                     title=context["routine_title"],
                     preferred_window=preferred_window,
+                    fixed_time=time.fromisoformat(fixed_time) if fixed_time else None,
                 )
 
-            options = [
-                {"id": "morning", "label": "Утром", "value": "утром"},
-                {"id": "afternoon", "label": "Днём", "value": "днём"},
-                {"id": "evening", "label": "Вечером", "value": "вечером"},
-                {"id": "cancel", "label": "Отмена", "value": "отмена"},
-            ]
             next_interaction = create_pending_interaction(
                 db,
                 user,
@@ -1331,7 +1555,7 @@ def _handle_pending_interaction(
                 original_message=interaction.original_message,
                 context={**context, "flow": "tracking_time"},
                 question="Когда лучше напоминать?",
-                options=options,
+                options=_routine_time_options(),
             )
             return _repeat_clarification(
                 user_external_id,
@@ -1344,8 +1568,27 @@ def _handle_pending_interaction(
 
     if flow == "tracking_time":
         preferred_window = _preferred_window_from_text(text, selected)
+        fixed_time = _fixed_time_from_text(text)
 
-        if not preferred_window:
+        if selected == "exact_time" and fixed_time is None:
+            next_interaction = create_pending_interaction(
+                db,
+                user,
+                source=source,
+                kind="clarification",
+                original_message=interaction.original_message,
+                context={**context, "flow": "tracking_exact_time"},
+                question="Во сколько напоминать?",
+                options=[{"id": "cancel", "label": "Отмена", "value": "отмена"}],
+            )
+            return _repeat_clarification(
+                user_external_id,
+                source,
+                parsed_message,
+                next_interaction,
+            )
+
+        if not preferred_window and not fixed_time:
             return _repeat_clarification(user_external_id, source, parsed_message, interaction)
 
         return _create_routine_confirmation(
@@ -1356,6 +1599,27 @@ def _handle_pending_interaction(
             parsed_message,
             title=context["routine_title"],
             preferred_window=preferred_window,
+            fixed_time=time.fromisoformat(fixed_time) if fixed_time else None,
+            cadence=context.get("cadence", "daily"),
+            weekdays=context.get("weekdays") or [],
+        )
+
+    if flow == "tracking_exact_time":
+        fixed_time = _fixed_time_from_text(text)
+
+        if not fixed_time:
+            return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+        return _create_routine_confirmation(
+            db,
+            user,
+            user_external_id,
+            source,
+            parsed_message,
+            title=context["routine_title"],
+            fixed_time=time.fromisoformat(fixed_time),
+            cadence=context.get("cadence", "daily"),
+            weekdays=context.get("weekdays") or [],
         )
 
     if flow in {"fixed_conflict", "fixed_time"}:
@@ -1411,8 +1675,9 @@ def _handle_pending_interaction(
 
         if selected == "routine" and parsed_message.tasks:
             preferred_window = parsed_message.tasks[0].preferred_window or _preferred_window_from_text(text)
+            fixed_time = parsed_message.tasks[0].fixed_start
 
-            if preferred_window:
+            if preferred_window or fixed_time:
                 return _create_routine_confirmation(
                     db,
                     user,
@@ -1421,6 +1686,9 @@ def _handle_pending_interaction(
                     parsed_message,
                     title=parsed_message.tasks[0].title,
                     preferred_window=preferred_window,
+                    fixed_time=fixed_time,
+                    cadence=_routine_schedule_from_text(interaction.original_message)[0],
+                    weekdays=_routine_schedule_from_text(interaction.original_message)[1],
                 )
 
         return _repeat_clarification(user_external_id, source, parsed_message, interaction)
@@ -1446,6 +1714,16 @@ def _handle_pending_interaction(
         )
 
     if flow == "create_routine":
+        if selected == "apply":
+            return _apply_routine_confirmation(
+                db,
+                user,
+                user_external_id,
+                source,
+                parsed_message,
+                interaction,
+            )
+
         if selected == "edit":
             next_interaction = create_pending_interaction(
                 db,
@@ -1455,12 +1733,7 @@ def _handle_pending_interaction(
                 original_message=interaction.original_message,
                 context={**context, "flow": "tracking_time"},
                 question="Когда лучше напоминать?",
-                options=[
-                    {"id": "morning", "label": "Утром", "value": "утром"},
-                    {"id": "afternoon", "label": "Днём", "value": "днём"},
-                    {"id": "evening", "label": "Вечером", "value": "вечером"},
-                    {"id": "cancel", "label": "Отмена", "value": "отмена"},
-                ],
+                options=_routine_time_options(),
             )
             return _repeat_clarification(
                 user_external_id,
@@ -1473,7 +1746,7 @@ def _handle_pending_interaction(
             user_external_id,
             source,
             parsed_message,
-            "Подтверждение сохранено, но routine ещё не применена.",
+            interaction.question or "Применить напоминание?",
             status="confirmation_required",
             confirmation=_confirmation_payload(interaction),
         )
@@ -1711,17 +1984,22 @@ def process_user_message(
                         routine_title=ambiguity.routine_title,
                     )
                 else:
-                    response = (
-                        _build_low_energy_confirmation(
+                    response = _build_explicit_routine_interaction(
+                        db,
+                        user,
+                        user_external_id,
+                        source,
+                        parsed_message,
+                    )
+
+                    if response is None and is_low_energy_replan_request(text, parsed_message):
+                        response = _build_low_energy_confirmation(
                             db,
                             user,
                             user_external_id,
                             source,
                             parsed_message,
                         )
-                        if is_low_energy_replan_request(text, parsed_message)
-                        else None
-                    )
 
                     if response is None:
                         user, response = _run_standard_message(

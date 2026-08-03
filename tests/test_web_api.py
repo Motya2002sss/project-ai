@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from datetime import date
+from datetime import date, datetime, time, timezone
 from pathlib import Path
 
 import pytest
@@ -8,6 +8,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 import app.models  # noqa: F401
+import app.services.planning_service as planning_service
+import app.services.time_service as time_service
 from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
@@ -279,7 +281,11 @@ def test_get_goals_returns_user_goals(client: TestClient):
     assert "научиться рисовать" in titles
 
 
-def test_get_plan_today_returns_plan_for_user_tasks(client: TestClient):
+def test_get_plan_today_returns_plan_for_user_tasks(client: TestClient, monkeypatch):
+    stable_now = datetime.combine(date.today(), time(hour=12), tzinfo=timezone.utc)
+    monkeypatch.setattr(planning_service, "get_user_now", lambda user, now=None: now or stable_now)
+    monkeypatch.setattr(time_service, "get_user_now", lambda user, now=None: now or stable_now)
+
     client.post(
         "/api/message",
         json={

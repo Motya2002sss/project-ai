@@ -15,6 +15,7 @@ from app.services.time_service import (
     get_user_now,
     resolve_target_date,
 )
+from app.services.routine_service import materialize_routine_occurrences
 
 
 PRIORITY_ORDER = {
@@ -484,6 +485,12 @@ def build_day_plan_result(
     day_plan.items.clear()
     db.flush()
 
+    materialize_routine_occurrences(
+        db,
+        user,
+        resolved_date,
+        commit=False,
+    )
     tasks = (
         db.query(Task)
         .filter(

@@ -7,7 +7,8 @@ function changeMarker(change: PlanChange): string {
     completed: "✓",
     cancelled: "−",
     restored: "↺",
-    unscheduled: "○"
+    unscheduled: "○",
+    routine: "↻"
   };
 
   return markers[change.kind];

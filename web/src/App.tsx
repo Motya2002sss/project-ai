@@ -182,6 +182,14 @@ function buildPlanUpdate(
     if (task) changes.push({ kind: "unscheduled", title: task.title, detail: "без времени" });
   }
 
+  for (const routineId of response.plan_diff.created_routine_ids) {
+    const routine = response.affected_routines.find((item) => item.id === routineId);
+
+    if (routine) {
+      changes.push({ kind: "routine", title: routine.title, detail: "регулярно" });
+    }
+  }
+
   const limitedChanges = changes.slice(0, 5);
   const goalOnly = response.affected_goals.length > 0 && limitedChanges.length === 0;
 

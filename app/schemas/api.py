@@ -58,6 +58,8 @@ class TaskResponse(BaseModel):
     deadline: datetime | None
     is_locked: bool
     status: StoredTaskStatus
+    routine_id: int | None = None
+    occurrence_date: date | None = None
 
 
 class GoalResponse(BaseModel):
@@ -66,6 +68,19 @@ class GoalResponse(BaseModel):
     category: str
     priority: str
     status: str
+
+
+class RoutineResponse(BaseModel):
+    id: int
+    title: str
+    cadence: str
+    weekdays: list[int] = Field(default_factory=list)
+    fixed_time: time | None = None
+    preferred_window: str | None = None
+    estimated_minutes: int | None = None
+    start_date: date
+    end_date: date | None = None
+    active: bool
 
 
 class ProfileResponse(BaseModel):
@@ -114,6 +129,7 @@ class PlanDiffResponse(BaseModel):
     cancelled_task_ids: list[int] = Field(default_factory=list)
     moved_plan_items: list[MovedPlanItemResponse] = Field(default_factory=list)
     unscheduled_task_ids: list[int] = Field(default_factory=list)
+    created_routine_ids: list[int] = Field(default_factory=list)
     conflict: str | None = None
     clarification: str | None = None
 
@@ -171,6 +187,7 @@ class DaySnapshotResponse(BaseModel):
     day_context: DayContextResponse
     tasks: list[TaskResponse] = Field(default_factory=list)
     goals: list[GoalResponse] = Field(default_factory=list)
+    routines: list[RoutineResponse] = Field(default_factory=list)
     plan: PlanResponse
     plan_version: int = Field(ge=0)
 
@@ -188,6 +205,7 @@ class MessageResponse(BaseModel):
     summary: str | None = None
     affected_tasks: list[TaskResponse] = Field(default_factory=list)
     affected_goals: list[GoalResponse] = Field(default_factory=list)
+    affected_routines: list[RoutineResponse] = Field(default_factory=list)
     profile: ProfileResponse | None = None
     plan_summary: PlanResponse | None = None
     plan_diff: PlanDiffResponse = Field(default_factory=PlanDiffResponse)

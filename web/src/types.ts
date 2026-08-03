@@ -27,6 +27,8 @@ export type Task = {
   deadline: string | null;
   is_locked: boolean;
   status: StoredTaskStatus;
+  routine_id: number | null;
+  occurrence_date: string | null;
 };
 
 export type Goal = {
@@ -35,6 +37,19 @@ export type Goal = {
   category: string;
   priority: string;
   status: string;
+};
+
+export type Routine = {
+  id: number;
+  title: string;
+  cadence: "daily" | "weekdays" | "selected_weekdays";
+  weekdays: number[];
+  fixed_time: string | null;
+  preferred_window: string | null;
+  estimated_minutes: number | null;
+  start_date: string;
+  end_date: string | null;
+  active: boolean;
 };
 
 export type PlanItem = {
@@ -103,6 +118,7 @@ export type DaySnapshot = {
   day_context: { energy_level: string | null; budget_limit: number | null };
   tasks: Task[];
   goals: Goal[];
+  routines: Routine[];
   plan: Plan;
   plan_version: number;
 };
@@ -120,6 +136,7 @@ export type MessageResponse = {
   summary: string | null;
   affected_tasks: Task[];
   affected_goals: Goal[];
+  affected_routines: Routine[];
   plan_summary: Plan | null;
   plan_diff: PlanDiff;
   clarification: Clarification | null;
@@ -142,6 +159,7 @@ export type PlanDiff = {
   cancelled_task_ids: number[];
   moved_plan_items: MovedPlanItem[];
   unscheduled_task_ids: number[];
+  created_routine_ids: number[];
   conflict: string | null;
   clarification: string | null;
 };
@@ -172,7 +190,7 @@ export type TaskStatusError = {
 };
 
 export type PlanChange = {
-  kind: "added" | "moved" | "completed" | "cancelled" | "restored" | "unscheduled";
+  kind: "added" | "moved" | "completed" | "cancelled" | "restored" | "unscheduled" | "routine";
   title: string;
   detail: string | null;
 };

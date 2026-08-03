@@ -74,6 +74,24 @@ def normalize_task_title(value: str) -> str:
     return title[0].upper() + title[1:]
 
 
+def normalize_routine_title(value: str) -> str:
+    title = _normalize_spaces(value)
+    title = re.sub(
+        r"^(?:кажд\w+\s+день|ежедневн\w*|по\s+будням|регулярн\w*|"
+        r"по\s+(?:понедельникам|вторникам|средам|четвергам|пятницам|субботам|воскресеньям))\s+",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    title = re.sub(
+        r"^(?:напоминай|напомни|нужно|хочу)\s+(?:мне\s+)?",
+        "",
+        title,
+        flags=re.IGNORECASE,
+    )
+    return normalize_task_title(title)
+
+
 def normalize_parsed_tasks(parsed_message: ParsedUserMessage, source_text: str) -> None:
     for task in parsed_message.tasks:
         task.title = normalize_task_title(task.title)
@@ -90,6 +108,10 @@ def normalize_parsed_tasks(parsed_message: ParsedUserMessage, source_text: str) 
 
 def is_cancel_message(text: str) -> bool:
     return bool(CANCEL_RE.fullmatch(text))
+
+
+def is_explicit_routine_request(text: str) -> bool:
+    return bool(EXPLICIT_ROUTINE_RE.search(text))
 
 
 def is_capability_request(text: str) -> bool:

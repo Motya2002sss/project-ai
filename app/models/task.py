@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Time, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -8,10 +8,18 @@ from app.db.base import Base
 
 class Task(Base):
     __tablename__ = "tasks"
+    __table_args__ = (
+        UniqueConstraint("routine_id", "occurrence_date", name="uq_tasks_routine_occurrence"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id", ondelete="SET NULL"), nullable=True, index=True)
+    routine_id: Mapped[int | None] = mapped_column(
+        ForeignKey("routines.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -19,6 +27,7 @@ class Task(Base):
     priority: Mapped[str] = mapped_column(String(32), nullable=False, default="medium")
     estimated_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     target_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    occurrence_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     scheduling_type: Mapped[str] = mapped_column(String(32), nullable=False, default="flexible")
     fixed_start: Mapped[time | None] = mapped_column(Time, nullable=True)
     fixed_end: Mapped[time | None] = mapped_column(Time, nullable=True)
@@ -33,4 +42,5 @@ class Task(Base):
 
     user = relationship("User", back_populates="tasks")
     goal = relationship("Goal", back_populates="tasks")
+    routine = relationship("Routine", back_populates="occurrences")
     plan_items = relationship("PlanItem", back_populates="task")

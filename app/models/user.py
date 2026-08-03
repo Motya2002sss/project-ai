@@ -21,4 +21,5 @@ class User(Base):
 
     goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
+    routines = relationship("Routine", back_populates="user", cascade="all, delete-orphan")
     day_plans = relationship("DayPlan", back_populates="user", cascade="all, delete-orphan")
