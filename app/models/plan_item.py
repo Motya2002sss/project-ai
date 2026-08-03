@@ -18,6 +18,7 @@ class PlanItem(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     item_type: Mapped[str] = mapped_column(String(64), nullable=False, default="task")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
+    unscheduled_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

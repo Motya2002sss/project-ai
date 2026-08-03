@@ -1,5 +1,6 @@
 export type MessageSource = "web_text";
 export type TaskStatus = "planned" | "done";
+export type StoredTaskStatus = TaskStatus | "cancelled";
 export type LoadState = "idle" | "loading" | "ready" | "error";
 
 export type Task = {
@@ -8,7 +9,15 @@ export type Task = {
   priority: string;
   estimated_minutes: number | null;
   target_date: string;
-  status: TaskStatus;
+  scheduling_type: "fixed" | "flexible" | "unscheduled";
+  fixed_start: string | null;
+  fixed_end: string | null;
+  preferred_window: string | null;
+  earliest_start: string | null;
+  latest_end: string | null;
+  deadline: string | null;
+  is_locked: boolean;
+  status: StoredTaskStatus;
 };
 
 export type Goal = {
@@ -27,6 +36,7 @@ export type PlanItem = {
   status: string;
   start_time: string | null;
   end_time: string | null;
+  unscheduled_reason: string | null;
 };
 
 export type Plan = {
@@ -45,11 +55,33 @@ export type MessageResponse = {
   source: MessageSource;
   intent: string;
   parsed: Record<string, unknown>;
+  status: "applied" | "needs_clarification" | "conflict";
+  needs_clarification: boolean;
+  clarification_question: string | null;
   reply_text: string;
   summary: string | null;
   affected_tasks: Task[];
   affected_goals: Goal[];
   plan_summary: Plan | null;
+  plan_diff: PlanDiff;
+};
+
+export type MovedPlanItem = {
+  task_id: number;
+  title: string;
+  old_start: string;
+  new_start: string;
+};
+
+export type PlanDiff = {
+  created_task_ids: number[];
+  updated_task_ids: number[];
+  completed_task_ids: number[];
+  cancelled_task_ids: number[];
+  moved_plan_items: MovedPlanItem[];
+  unscheduled_task_ids: number[];
+  conflict: string | null;
+  clarification: string | null;
 };
 
 export type TodayData = {
@@ -63,6 +95,7 @@ export type TaskPlacement = {
   startTime: string | null;
   endTime: string | null;
   planStatus: string;
+  unscheduledReason: string | null;
 };
 
 export type TaskStatusError = {
@@ -70,7 +103,7 @@ export type TaskStatusError = {
 };
 
 export type PlanChange = {
-  kind: "added" | "moved" | "completed" | "restored" | "unscheduled";
+  kind: "added" | "moved" | "completed" | "cancelled" | "restored" | "unscheduled";
   title: string;
   detail: string | null;
 };

@@ -1,7 +1,8 @@
 import re
+from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 Intent = Literal[
@@ -22,6 +23,9 @@ Intent = Literal[
 DateValue = Literal["today", "tomorrow"]
 EnergyLevel = Literal["low", "medium", "high"]
 Priority = Literal["low", "medium", "high"]
+TaskOperation = Literal["create", "update", "cancel", "complete"]
+SchedulingType = Literal["fixed", "flexible", "unscheduled"]
+PreferredWindow = Literal["morning", "afternoon", "evening", "anytime"]
 
 TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 
@@ -40,8 +44,22 @@ class ParsedTask(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     title: str = Field(min_length=1, max_length=255)
+    operation: TaskOperation = "create"
+    scheduling_type: SchedulingType | None = None
+    target_date: str | None = None
+    fixed_start: str | None = None
+    fixed_end: str | None = None
+    preferred_window: PreferredWindow | None = None
+    earliest_start: str | None = None
+    latest_end: str | None = None
+    deadline: datetime | None = None
     priority: Priority = Field(default="medium")
     estimated_minutes: int | None = Field(default=None, ge=1, le=1440)
+    duration_delta_minutes: int | None = Field(default=None, ge=1, le=1440)
+    referenced_task_title: str | None = Field(default=None, max_length=255)
+    recurrence_hint: str | None = Field(default=None, max_length=255)
+    needs_clarification: bool = False
+    clarification_reason: str | None = Field(default=None, max_length=500)
 
     @field_validator("title", mode="before")
     @classmethod
@@ -57,6 +75,91 @@ class ParsedTask(BaseModel):
     @classmethod
     def normalize_estimated_minutes(cls, value):
         return _empty_to_none(value)
+
+    @field_validator("duration_delta_minutes", mode="before")
+    @classmethod
+    def normalize_duration_delta_minutes(cls, value):
+        return _empty_to_none(value)
+
+    @field_validator("target_date", mode="before")
+    @classmethod
+    def normalize_target_date(cls, value):
+        value = _empty_to_none(value)
+
+        if value is None:
+            return None
+
+        if isinstance(value, date):
+            return value.isoformat()
+
+        normalized = str(value).strip().lower()
+
+        if normalized in {"today", "tomorrow"}:
+            return normalized
+
+        date.fromisoformat(normalized)
+        return normalized
+
+    @field_validator("fixed_start", "fixed_end", "earliest_start", "latest_end", mode="before")
+    @classmethod
+    def normalize_task_times(cls, value):
+        value = _empty_to_none(value)
+
+        if value is None:
+            return None
+
+        if isinstance(value, int):
+            value = f"{value:02d}:00"
+        elif isinstance(value, str):
+            value = value.strip()
+
+            if re.fullmatch(r"\d{1,2}", value):
+                value = f"{int(value):02d}:00"
+            else:
+                match = re.fullmatch(r"(\d{1,2}):(\d{1,2})", value)
+
+                if match:
+                    value = f"{int(match.group(1)):02d}:{int(match.group(2)):02d}"
+
+        return value
+
+    @field_validator("fixed_start", "fixed_end", "earliest_start", "latest_end")
+    @classmethod
+    def validate_task_time(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+
+        if not TIME_RE.match(value):
+            raise ValueError("time must use HH:MM format")
+
+        hour, minute = value.split(":")
+
+        if int(hour) > 23 or int(minute) > 59:
+            raise ValueError("time is out of range")
+
+        return value
+
+    @field_validator(
+        "referenced_task_title",
+        "recurrence_hint",
+        "clarification_reason",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_task_text(cls, value):
+        value = _empty_to_none(value)
+
+        if value is None:
+            return None
+
+        return str(value).strip()
+
+    @model_validator(mode="after")
+    def infer_scheduling_type(self):
+        if self.scheduling_type is None and self.operation == "create":
+            self.scheduling_type = "fixed" if self.fixed_start else "flexible"
+
+        return self
 
 
 class ParsedUserMessage(BaseModel):

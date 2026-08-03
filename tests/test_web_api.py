@@ -84,8 +84,39 @@ def test_post_message_adds_task(client: TestClient):
     assert payload["source"] == "web_text"
     assert payload["intent"] == "add_tasks"
     assert payload["affected_tasks"][0]["title"] == "разобрать документы"
+    assert payload["status"] == "applied"
+    assert payload["plan_diff"]["created_task_ids"] == [payload["affected_tasks"][0]["id"]]
     assert payload["plan_summary"]["date"] == payload["affected_tasks"][0]["target_date"]
     assert "Принял" in payload["reply_text"]
+
+
+def test_fixed_conflict_returns_clarification_without_partial_api_mutation(client: TestClient):
+    first = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "api-conflict-user",
+            "source": "web_text",
+            "text": "Завтра в 19:00 теннис на час",
+        },
+    )
+    second = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "api-conflict-user",
+            "source": "web_text",
+            "text": "Завтра в 19:00 созвон на час",
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    payload = second.json()
+    tasks = client.get("/api/tasks/api-conflict-user?date=tomorrow").json()
+
+    assert payload["status"] == "conflict"
+    assert payload["needs_clarification"] is True
+    assert payload["plan_diff"]["conflict"]
+    assert [task["title"] for task in tasks] == ["теннис"]
 
 
 def test_tasks_are_isolated_by_user(client: TestClient):
@@ -113,7 +144,7 @@ def test_tasks_are_isolated_by_user(client: TestClient):
     assert [task["title"] for task in user_b_tasks] == ["купить продукты"]
 
 
-def test_owner_can_set_planned_task_done(client: TestClient):
+def test_owner_can_set_planned_task_done_and_keep_day_history(client: TestClient):
     task = add_task(
         client,
         user_external_id="status-owner",
@@ -129,7 +160,8 @@ def test_owner_can_set_planned_task_done(client: TestClient):
     assert response.json()["status"] == "done"
 
     plan = client.get("/api/plan/status-owner?date=today").json()
-    assert all(item["task_id"] != task["id"] for item in plan["items"])
+    completed_item = next(item for item in plan["items"] if item["task_id"] == task["id"])
+    assert completed_item["status"] == "done"
 
 
 def test_owner_can_return_done_task_to_planned(client: TestClient):

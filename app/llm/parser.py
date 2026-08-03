@@ -1,13 +1,14 @@
 import json
 import logging
 import re
+from typing import get_args
 
 import httpx
 from openai import OpenAI
 
 from app.core.config import settings
 from app.llm.prompts import SYSTEM_PROMPT
-from app.llm.schemas import ParsedTask, ParsedUserMessage
+from app.llm.schemas import Intent, ParsedTask, ParsedUserMessage
 
 
 LLM_PROVIDERS = {"openai", "openai-compatible", "custom", "ollama"}
@@ -238,6 +239,263 @@ def _extract_date(text: str) -> str | None:
     return None
 
 
+def _extract_task_time(text: str) -> str | None:
+    match = re.search(r"\b(?:в|на|с)\s*(\d{1,2})(?::(\d{2}))\b", text, re.IGNORECASE)
+
+    if not match:
+        return None
+
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+
+def _extract_fixed_end(text: str) -> str | None:
+    match = re.search(
+        r"\b(?:с|в)\s*\d{1,2}(?::\d{2})?\s*(?:до|[-–—])\s*(\d{1,2})(?::(\d{2}))\b",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+
+def _extract_duration_minutes(text: str) -> int | None:
+    lowered = text.lower().replace("ё", "е")
+
+    minute_match = re.search(r"\b(\d{1,4})\s*(?:мин(?:ут[уы]?)?|минутку)\b", lowered)
+
+    if minute_match:
+        return min(int(minute_match.group(1)), 1440)
+
+    hour_match = re.search(r"\b(\d+(?:[.,]\d+)?)\s*(?:ч(?:ас(?:а|ов)?)?)\b", lowered)
+
+    if hour_match:
+        hours = float(hour_match.group(1).replace(",", "."))
+        return min(max(int(hours * 60), 1), 1440)
+
+    if "полтора часа" in lowered or "полтора часа" in lowered:
+        return 90
+
+    if "полчаса" in lowered or "пол часа" in lowered:
+        return 30
+
+    if re.search(r"\bна\s+(?:один\s+)?час\b", lowered):
+        return 60
+
+    return None
+
+
+def _extract_preferred_window(text: str) -> str | None:
+    lowered = text.lower()
+
+    if re.search(r"\b(утром|утро|с утра)\b", lowered):
+        return "morning"
+
+    if re.search(r"\b(днем|днём|после обеда)\b", lowered):
+        return "afternoon"
+
+    if re.search(r"\b(вечером|вечер)\b", lowered):
+        return "evening"
+
+    return None
+
+
+def _extract_earliest_start(text: str) -> str | None:
+    match = re.search(
+        r"\b(?:после|не раньше)\s*(\d{1,2})(?::(\d{2}))\b",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+
+def _extract_latest_end(text: str) -> str | None:
+    match = re.search(
+        r"\b(?:закончить\s+до|не позже|до)\s*(\d{1,2})(?::(\d{2}))\b",
+        text,
+        re.IGNORECASE,
+    )
+
+    if not match:
+        return None
+
+    return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+
+def _clean_scheduled_task_title(text: str) -> str:
+    cleaned = text.strip(" \n\t.,;:-")
+    cleaned = re.sub(r"\b(?:сегодня|завтра|на сегодня|на завтра)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:утром|днем|днём|вечером|с утра|после обеда)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:после|не раньше)\s*\d{1,2}(?::\d{2})\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:закончить\s+до|не позже|до)\s*\d{1,2}(?::\d{2})\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:в|на)\s*\d{1,2}(?::\d{2})\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:с|в)\s*\d{1,2}(?::\d{2})?\s*(?:до|[-–—])\s*\d{1,2}(?::\d{2})\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b\d{1,4}\s*(?:мин(?:ут[уы]?)?|ч(?:ас(?:а|ов)?)?)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(?:на\s+)?(?:полтора часа|полчаса|пол часа|один час|час)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = cleaned.strip()
+    cleaned = re.sub(
+        r"^(?:я\s+)?(?:надо|нужно|хочу|планирую|добавь|добавить)\s+",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \n\t.,;:-")
+
+    return cleaned
+
+
+def _clean_operation_reference(text: str, operation: str) -> str:
+    cleaned = text.strip(" \n\t.,;:-")
+
+    if operation == "cancel":
+        cleaned = re.sub(r"\b(?:отмени(?:ть)?|отменяется|отменить|отмена)\b", " ", cleaned, flags=re.IGNORECASE)
+    elif operation == "update":
+        cleaned = re.sub(r"\b(?:перенеси(?:ть)?|переносится|перенести)\b", " ", cleaned, flags=re.IGNORECASE)
+    elif operation == "complete":
+        cleaned = _extract_done_task_title(cleaned) or ""
+
+    cleaned = re.sub(r"\b(?:сегодня|завтра|на сегодня|на завтра)\b", " ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \n\t.,;:-")
+
+    return cleaned
+
+
+def _fallback_semantic_task(text: str, intent: str) -> ParsedTask | None:
+    lowered = text.lower().replace("ё", "е")
+    target_date = _extract_date(text)
+    explicit_start = _extract_task_time(text)
+    explicit_end = _extract_fixed_end(text)
+    duration = _extract_duration_minutes(text)
+    preferred_window = _extract_preferred_window(text)
+    earliest_start = _extract_earliest_start(text)
+    latest_end = _extract_latest_end(text)
+
+    if re.search(r"\b(?:отменяется|отмени(?:ть)?|отменить)\b", lowered):
+        reference = _clean_operation_reference(text, "cancel")
+        return ParsedTask(
+            title=reference or "Отменить задачу",
+            operation="cancel",
+            target_date=target_date,
+            referenced_task_title=reference or None,
+        )
+
+    if re.search(r"\b(?:перенеси(?:ть)?|переносится|перенести)\b", lowered):
+        reference = _clean_operation_reference(text, "update")
+        return ParsedTask(
+            title=reference or "Перенести задачу",
+            operation="update",
+            target_date=target_date,
+            referenced_task_title=reference or None,
+        )
+
+    duration_delta_match = re.search(
+        r"\bдобавь\s+(?:еще|ещё)?\s*(\d{1,4})\s*мин(?:ут[уы]?)?\s+(?:на|к)\s+(.+)$",
+        text,
+        re.IGNORECASE,
+    )
+
+    if duration_delta_match:
+        reference = duration_delta_match.group(2).strip(" .,!?:;")
+        return ParsedTask(
+            title=reference,
+            operation="update",
+            target_date=target_date,
+            duration_delta_minutes=int(duration_delta_match.group(1)),
+            referenced_task_title=reference,
+        )
+
+    if intent == "mark_done":
+        reference = _clean_operation_reference(text, "complete")
+        return ParsedTask(
+            title=reference or "Выполненная задача",
+            operation="complete",
+            target_date=target_date,
+            referenced_task_title=reference or None,
+        )
+
+    recurrence_match = re.search(r"\b(?:обычно|каждый день|по будням|регулярно|хожу)\b", lowered)
+
+    if recurrence_match:
+        title = _clean_scheduled_task_title(text)
+        return ParsedTask(
+            title=title or text.strip()[:255],
+            operation="create",
+            scheduling_type="unscheduled",
+            target_date=target_date,
+            preferred_window=preferred_window,
+            recurrence_hint=recurrence_match.group(0),
+            needs_clarification=True,
+            clarification_reason="recurrence_not_supported",
+        )
+
+    confirmed_event = re.search(r"\b(?:записался|записалась|договорился|договорилась)\b", lowered)
+
+    if confirmed_event:
+        title = re.sub(
+            r"^(?:я\s+)?(?:записался|записалась|договорился|договорилась)\s+(?:на\s+)?",
+            "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        title = _clean_scheduled_task_title(title)
+
+        if not explicit_start:
+            return ParsedTask(
+                title=title or text.strip()[:255],
+                operation="create",
+                scheduling_type="unscheduled",
+                target_date=target_date,
+                estimated_minutes=duration,
+                needs_clarification=True,
+                clarification_reason="missing_fixed_time",
+            )
+
+        return ParsedTask(
+            title=title or text.strip()[:255],
+            operation="create",
+            scheduling_type="fixed",
+            target_date=target_date,
+            fixed_start=explicit_start,
+            fixed_end=explicit_end,
+            estimated_minutes=duration or 60,
+        )
+
+    if explicit_start and intent == "add_tasks":
+        title = _clean_scheduled_task_title(text)
+        return ParsedTask(
+            title=title or text.strip()[:255],
+            operation="create",
+            scheduling_type="fixed",
+            target_date=target_date,
+            fixed_start=explicit_start,
+            fixed_end=explicit_end,
+            estimated_minutes=duration or 60,
+            priority=_priority(title),
+        )
+
+    if intent == "add_tasks" and (preferred_window or earliest_start or latest_end):
+        title = _clean_scheduled_task_title(text)
+        return ParsedTask(
+            title=title or text.strip()[:255],
+            operation="create",
+            scheduling_type="flexible",
+            target_date=target_date,
+            preferred_window=preferred_window,
+            earliest_start=earliest_start,
+            latest_end=latest_end,
+            estimated_minutes=duration or _estimate_minutes(title),
+            priority=_priority(title),
+        )
+
+    return None
+
+
 def _clean_goal_title(text: str) -> str:
     cleaned = text.strip(" \n\t.,;:-")
 
@@ -300,6 +558,12 @@ def _extract_done_task_title(text: str) -> str | None:
         "готово",
         "закрыл",
         "закрыла",
+        "закончил",
+        "закончила",
+        "оплатил",
+        "оплатила",
+        "купил",
+        "купила",
         "отметь",
         "как",
     ]
@@ -546,6 +810,12 @@ def _detect_intent(text: str) -> str:
         "готово",
         "закрыл",
         "закрыла",
+        "закончил",
+        "закончила",
+        "оплатил",
+        "оплатила",
+        "купил",
+        "купила",
     ]):
         return "mark_done"
 
@@ -559,6 +829,7 @@ def _detect_intent(text: str) -> str:
 def _fallback_extract_tasks(text: str) -> list[ParsedTask]:
     normalized_text = text.replace("\n", ",")
     raw_parts = re.split(r"[,;]", normalized_text)
+    target_date = _extract_date(text)
 
     tasks: list[ParsedTask] = []
 
@@ -576,7 +847,8 @@ def _fallback_extract_tasks(text: str) -> list[ParsedTask]:
         if any(pattern in lowered for pattern in SKIP_PATTERNS):
             continue
 
-        part = _clean_task_title(part)
+        duration = _extract_duration_minutes(part)
+        part = _clean_scheduled_task_title(part) if duration else _clean_task_title(part)
 
         if not part:
             continue
@@ -600,8 +872,9 @@ def _fallback_extract_tasks(text: str) -> list[ParsedTask]:
             tasks.append(
                 ParsedTask(
                     title=title[:255],
+                    target_date=target_date,
                     priority=_priority(title),
-                    estimated_minutes=_estimate_minutes(title),
+                    estimated_minutes=duration or _estimate_minutes(title),
                 )
             )
 
@@ -615,13 +888,22 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
     goals: list[str] = []
     budget_limit = None if intent == "update_goals" else _extract_budget(text)
 
-    if intent == "add_tasks":
+    semantic_task = (
+        _fallback_semantic_task(text, intent)
+        if intent in {"add_tasks", "mark_done", "reschedule"}
+        else None
+    )
+
+    if semantic_task:
+        tasks = [semantic_task]
+    elif intent == "add_tasks":
         tasks = _fallback_extract_tasks(text)
 
         if not tasks:
             tasks.append(
                 ParsedTask(
                     title=text.strip()[:255],
+                    target_date=_extract_date(text),
                     priority="medium",
                     estimated_minutes=60,
                 )
@@ -716,6 +998,49 @@ def _normalize_llm_data(data):
         if normalized[field] is None:
             normalized[field] = []
 
+    normalized_tasks = []
+
+    for task in normalized["tasks"]:
+        if not isinstance(task, dict):
+            normalized_tasks.append(task)
+            continue
+
+        normalized_task = dict(task)
+
+        for field in [
+            "operation",
+            "scheduling_type",
+            "target_date",
+            "fixed_start",
+            "fixed_end",
+            "preferred_window",
+            "earliest_start",
+            "latest_end",
+            "deadline",
+            "estimated_minutes",
+            "duration_delta_minutes",
+            "referenced_task_title",
+            "recurrence_hint",
+            "clarification_reason",
+        ]:
+            if field in normalized_task:
+                normalized_task[field] = _normalize_empty_llm_value(normalized_task[field])
+
+        if normalized_task.get("operation") is None:
+            normalized_task["operation"] = "create"
+
+        for field in ["fixed_start", "fixed_end", "earliest_start", "latest_end"]:
+            if field in normalized_task:
+                normalized_task[field] = _normalize_llm_time(normalized_task[field])
+
+        if normalized_task.get("operation") == "unscheduled":
+            normalized_task["operation"] = "create"
+            normalized_task["scheduling_type"] = "unscheduled"
+
+        normalized_tasks.append(normalized_task)
+
+    normalized["tasks"] = normalized_tasks
+
     return normalized
 
 
@@ -743,6 +1068,23 @@ def _parse_llm_content(content: str | None, text: str) -> ParsedUserMessage:
         raise RuntimeError("Empty LLM response")
 
     data = _normalize_llm_data(_load_llm_json(content))
+
+    if isinstance(data, dict) and data.get("intent") not in get_args(Intent):
+        data["intent"] = _detect_intent(text)
+
+    if isinstance(data, dict) and isinstance(data.get("tasks"), list):
+        fallback_intent = _detect_intent(text)
+        fallback_task = _fallback_semantic_task(text, fallback_intent)
+
+        if fallback_task is None:
+            fallback_tasks = _fallback_extract_tasks(text) if fallback_intent == "add_tasks" else []
+            fallback_task = fallback_tasks[0] if fallback_tasks else None
+
+        if fallback_task:
+            for task_data in data["tasks"]:
+                if isinstance(task_data, dict) and not str(task_data.get("title") or "").strip():
+                    task_data["title"] = fallback_task.title
+
     data["raw_text"] = text
 
     return _polish_llm_parsed_message(ParsedUserMessage.model_validate(data), text)
@@ -777,11 +1119,93 @@ def _polish_llm_parsed_message(parsed: ParsedUserMessage, text: str) -> ParsedUs
         parsed.tasks = []
 
     parsed.date = text_date
+    parsed.work_start = parsed.work_start or _extract_work_start(text)
+    parsed.work_until = parsed.work_until or _extract_work_until(text)
+    parsed.sleep_time = parsed.sleep_time or _extract_sleep_time(text)
 
     if parsed.energy_level is None:
         parsed.energy_level = _extract_energy(text)
 
     parsed.budget_limit = _extract_budget(text)
+
+    semantic_task = _fallback_semantic_task(text, fallback_intent)
+
+    if semantic_task and fallback_intent in {"add_tasks", "mark_done", "reschedule"}:
+        if semantic_task.operation != "create" or semantic_task.needs_clarification:
+            parsed.intent = fallback_intent
+
+        if not parsed.tasks:
+            parsed.tasks = [semantic_task]
+        elif (
+            semantic_task.operation != "create"
+            or semantic_task.needs_clarification
+            or semantic_task.scheduling_type == "fixed"
+            or semantic_task.preferred_window
+            or semantic_task.earliest_start
+            or semantic_task.latest_end
+        ):
+            parsed_task = parsed.tasks[0]
+            parsed_task.title = semantic_task.title
+            parsed_task.operation = semantic_task.operation
+            parsed_task.scheduling_type = semantic_task.scheduling_type
+            parsed_task.target_date = semantic_task.target_date
+            parsed_task.fixed_start = semantic_task.fixed_start or parsed_task.fixed_start
+            parsed_task.fixed_end = semantic_task.fixed_end or parsed_task.fixed_end
+            parsed_task.preferred_window = semantic_task.preferred_window or parsed_task.preferred_window
+            parsed_task.earliest_start = semantic_task.earliest_start or parsed_task.earliest_start
+            parsed_task.latest_end = semantic_task.latest_end or parsed_task.latest_end
+            parsed_task.estimated_minutes = semantic_task.estimated_minutes or parsed_task.estimated_minutes
+            parsed_task.duration_delta_minutes = (
+                semantic_task.duration_delta_minutes or parsed_task.duration_delta_minutes
+            )
+            parsed_task.referenced_task_title = (
+                semantic_task.referenced_task_title or parsed_task.referenced_task_title
+            )
+            parsed_task.recurrence_hint = semantic_task.recurrence_hint or parsed_task.recurrence_hint
+            parsed_task.needs_clarification = semantic_task.needs_clarification
+            parsed_task.clarification_reason = (
+                semantic_task.clarification_reason or parsed_task.clarification_reason
+            )
+
+            if semantic_task.scheduling_type == "flexible" and (
+                semantic_task.preferred_window
+                or semantic_task.earliest_start
+                or semantic_task.latest_end
+            ):
+                parsed_task.fixed_start = None
+                parsed_task.fixed_end = None
+
+    if fallback_intent == "add_tasks" and not parsed.tasks:
+        parsed.intent = "add_tasks"
+        parsed.tasks = _fallback_extract_tasks(text)
+
+    if fallback_intent == "add_tasks" and semantic_task is None and parsed.tasks:
+        fallback_tasks = _fallback_extract_tasks(text)
+
+        for parsed_task, fallback_task in zip(parsed.tasks, fallback_tasks):
+            if parsed_task.operation != "create":
+                continue
+
+            parsed_task.target_date = text_date
+
+            if parsed_task.estimated_minutes is None:
+                parsed_task.estimated_minutes = fallback_task.estimated_minutes
+
+            if parsed_task.scheduling_type == "unscheduled" and not parsed_task.needs_clarification:
+                parsed_task.scheduling_type = fallback_task.scheduling_type
+
+    if parsed.intent != "update_goals":
+        parsed.goals = []
+
+    for task in parsed.tasks:
+        if task.target_date is None:
+            task.target_date = text_date
+
+        if task.fixed_start:
+            task.scheduling_type = "fixed"
+
+        if task.operation == "complete" and parsed.done_task_title is None:
+            parsed.done_task_title = task.referenced_task_title or task.title
 
     if parsed.intent == "daily_summary":
         done_titles, skipped_titles = _extract_summary_titles(text)
@@ -838,6 +1262,7 @@ def _parse_with_ollama(text: str) -> ParsedUserMessage:
         "messages": _llm_messages(text),
         "options": {
             "num_predict": settings.llm_max_output_tokens,
+            "temperature": 0,
         },
     }
 

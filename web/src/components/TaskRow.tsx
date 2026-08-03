@@ -3,6 +3,7 @@ import type { Task, TaskStatus, TaskStatusError } from "../types";
 type TaskRowProps = {
   task: Task;
   time: string | null;
+  unscheduledReason?: string | null;
   pending: boolean;
   error: TaskStatusError | null;
   changed?: boolean;
@@ -27,9 +28,23 @@ function formatDuration(minutes: number | null): string | null {
   return `${Math.floor(minutes / 60)} ч ${minutes % 60} мин`;
 }
 
+function formatUnscheduledReason(reason: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    preferred_window_passed: "Предпочтённое время прошло",
+    no_available_slot: "Нет свободного окна",
+    fixed_time_conflict: "Конфликт времени",
+    fixed_time_passed: "Указанное время прошло",
+    missing_fixed_time: "Нужно уточнить время",
+    needs_clarification: "Нужно уточнение"
+  };
+
+  return reason ? labels[reason] || "Без времени" : "Без времени";
+}
+
 export default function TaskRow({
   task,
   time,
+  unscheduledReason = null,
   pending,
   error,
   changed = false,
@@ -80,10 +95,10 @@ export default function TaskRow({
                 "Сохраняю…"
               ) : done ? (
                 "Выполнено"
+              ) : !scheduled ? (
+                formatUnscheduledReason(unscheduledReason)
               ) : duration ? (
                 duration
-              ) : !scheduled ? (
-                "Без времени"
               ) : null}
             </span>
           </span>

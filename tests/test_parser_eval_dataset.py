@@ -51,6 +51,9 @@ def test_mock_parser_eval_dataset(monkeypatch):
         if "tasks_contains" in expected:
             _assert_contains_all([task.title for task in parsed.tasks], expected["tasks_contains"])
 
+        if "tasks_match" in expected:
+            assert eval_parser_cases._tasks_match(parsed.tasks, expected["tasks_match"]), case["text"]
+
         if "task_priorities_contains" in expected:
             _assert_contains_all([task.priority for task in parsed.tasks], expected["task_priorities_contains"])
 

@@ -39,6 +39,8 @@ The repository already contains a working MVP foundation:
 - today/tomorrow planning;
 - goal task suggestions;
 - work/sleep-aware planning;
+- deterministic adaptive interval planning with fixed, flexible, and unscheduled tasks;
+- conflict/clarification and factual plan diff contracts;
 - mark done flow;
 - daily summary flow;
 - smoke-check script at `scripts/check_mvp.py`;
@@ -69,6 +71,8 @@ Do not require documentation updates for every small CSS adjustment, isolated ty
 - Schema changes belong in Alembic migrations.
 - Telegram bot and Web API must use the same service layer where practical.
 - New text input channels must converge on the shared message processing pipeline.
+- Final schedule times must be calculated and overlap-checked by deterministic backend code.
+- Preserve valid fixed, completed, past, and existing flexible plan positions where possible.
 - Future voice/audio input should be converted to text first, then routed through the same parser and services.
 - Important state must not live only inside chat history or LLM messages.
 - User-owned reads and writes must filter by user context, usually `user_id`.
@@ -91,6 +95,7 @@ Backend responsibilities:
 - build plans;
 - check dates and time windows;
 - control task statuses.
+- calculate availability, select free slots, reject fixed conflicts, and produce factual plan diffs.
 
 LLM integration rules:
 

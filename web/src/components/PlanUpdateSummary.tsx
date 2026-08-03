@@ -5,6 +5,7 @@ function changeMarker(change: PlanChange): string {
     added: "+",
     moved: "→",
     completed: "✓",
+    cancelled: "−",
     restored: "↺",
     unscheduled: "○"
   };

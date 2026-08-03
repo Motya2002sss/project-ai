@@ -32,13 +32,20 @@ Implemented:
 - long-term goals;
 - tasks;
 - `Task.target_date`;
+- task operations: create, update, cancel, and complete;
+- fixed, flexible, and unscheduled task types;
+- fixed times, preferred day windows, earliest start, latest end, deadline, and duration constraints;
 - today/tomorrow task separation;
 - today/tomorrow planning;
 - goal task suggestions;
-- work/sleep-aware planning;
+- deterministic work/sleep/current-time-aware interval planning;
 - configurable buffer after work;
 - priority and estimated duration handling;
-- overflow tasks marked as not scheduled;
+- 15-minute free-slot search with a no-overlap invariant;
+- minimal-disruption rebuilds that preserve valid existing slots;
+- honest unscheduled reasons and clarification for unresolved conflicts;
+- factual plan diff returned by the shared message pipeline;
+- completed tasks retained in their original timeline position as day history;
 - mark done flow;
 - daily summary flow;
 - smoke-check script at `scripts/check_mvp.py`;
@@ -46,13 +53,15 @@ Implemented:
 
 Not ready yet:
 
-- production-quality LLM evaluation and prompt tuning;
+- production LLM provider selection and ongoing prompt tuning;
 - full multi-screen Web UI;
 - production authentication;
 - production deployment;
 - full production Web API surface for all future Web UI workflows.
 
 FastAPI currently provides `/health` and a minimal `/api` foundation used by the Today Web UI. The primary MVP interface is still Telegram, and both Telegram and API flows converge on the same parser, service, and planner layers.
+
+Planning is split deliberately: the parser or LLM extracts operations and constraints, while the backend calculates timezone-aware availability, resolves user-owned tasks, prevents overlaps, persists changes atomically, and produces the factual diff. The LLM never chooses or writes the final schedule directly.
 
 ## Project Structure
 
@@ -308,6 +317,8 @@ curl -X POST http://127.0.0.1:8000/api/message \
   }'
 ```
 
+`MessageResponse` includes `status` (`applied`, `needs_clarification`, or `conflict`), a human `clarification_question` when needed, and a backend-calculated `plan_diff`. The diff lists created, updated, completed, cancelled, moved, and unscheduled task IDs. A fixed-time conflict does not partially mutate the plan.
+
 Read endpoints:
 
 ```text
@@ -341,7 +352,7 @@ http://127.0.0.1:5173
 
 ### 7. Run The Today Web UI
 
-The first Web UI is a minimal Today screen. It lets you type free text, sends it to `POST /api/message` with `source=web_text`, and refreshes today's plan, tasks, goals, and progress from the existing API endpoints. Today task checkboxes can switch between `planned` and `done` through the status endpoint; planning logic remains in services.
+The first Web UI is a minimal Today screen. It lets you type free text, sends it to `POST /api/message` with `source=web_text`, and refreshes today's plan, tasks, goals, and progress from the existing API endpoints. Today task checkboxes can switch between `planned` and `done` through the status endpoint. Scheduled times, unscheduled reasons, conflict messages, and plan changes come from backend services rather than frontend guesses.
 
 Start the backend first:
 
@@ -463,5 +474,6 @@ npm run build
 - Telegram bot and future API endpoints should stay thin.
 - Business logic belongs in `app/services/`.
 - Parser or LLM extracts structured meaning; backend validates and stores.
+- LLM output is untrusted input; deterministic backend code calculates all displayed times and rejects overlaps.
 - The planner must stay universal and must not be hardcoded around one user's schedule, goals, or tasks.
 - Keep the mock parser as a fallback when real LLM support is added.

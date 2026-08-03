@@ -72,7 +72,7 @@ def get_tasks(
 ) -> list[TaskResponse]:
     user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
     plan_date = (
-        get_plan_date(ParsedUserMessage(intent="show_tasks", date=date))
+        get_plan_date(ParsedUserMessage(intent="show_tasks", date=date), user=user)
         if date
         else None
     )

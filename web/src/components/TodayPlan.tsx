@@ -13,6 +13,7 @@ type TodayPlanProps = {
   todayTasks: Task[];
   scheduledTasks: Array<{ task: Task; placement: TaskPlacement }>;
   unscheduledTasks: Task[];
+  taskPlacements: Map<number, TaskPlacement>;
   pendingTaskIds: Set<number>;
   taskErrors: Map<number, TaskStatusError>;
   changedTaskIds: Set<number>;
@@ -38,6 +39,7 @@ export default function TodayPlan({
   todayTasks,
   scheduledTasks,
   unscheduledTasks,
+  taskPlacements,
   pendingTaskIds,
   taskErrors,
   changedTaskIds,
@@ -117,6 +119,7 @@ export default function TodayPlan({
                 key={`unscheduled-${task.id}`}
                 task={task}
                 time={null}
+                unscheduledReason={taskPlacements.get(task.id)?.unscheduledReason || null}
                 pending={pendingTaskIds.has(task.id)}
                 error={taskErrors.get(task.id) || null}
                 changed={changedTaskIds.has(task.id)}

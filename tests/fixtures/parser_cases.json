@@ -223,5 +223,164 @@
       "date": "today",
       "energy_level": "low"
     }
+  },
+  {
+    "text": "Сегодня в 19:00 созвон на час",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "today",
+      "tasks_match": [
+        {
+          "title_contains": "созвон",
+          "operation": "create",
+          "scheduling_type": "fixed",
+          "fixed_start": "19:00",
+          "estimated_minutes": 60
+        }
+      ]
+    }
+  },
+  {
+    "text": "Сегодня добавь теннис на час",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "today",
+      "tasks_match": [
+        {
+          "title_contains": "теннис",
+          "operation": "create",
+          "scheduling_type": "flexible",
+          "estimated_minutes": 60
+        }
+      ]
+    }
+  },
+  {
+    "text": "Вечером нужно подготовить презентацию 45 минут",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "подготовить презентацию",
+          "operation": "create",
+          "scheduling_type": "flexible",
+          "preferred_window": "evening",
+          "estimated_minutes": 45
+        }
+      ]
+    }
+  },
+  {
+    "text": "Я записался на теннис в 19:00",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "теннис",
+          "operation": "create",
+          "scheduling_type": "fixed",
+          "fixed_start": "19:00"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Я записался на теннис",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "теннис",
+          "scheduling_type": "unscheduled",
+          "needs_clarification": true,
+          "clarification_reason": "missing_fixed_time"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Утром хожу в зал",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "зал",
+          "scheduling_type": "unscheduled",
+          "preferred_window": "morning",
+          "needs_clarification": true,
+          "clarification_reason": "recurrence_not_supported"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Зал отменяется",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "зал",
+          "operation": "cancel",
+          "referenced_task_title": "Зал"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Проект перенеси на завтра",
+    "expected": {
+      "intent": "add_tasks",
+      "date": "tomorrow",
+      "tasks_match": [
+        {
+          "title_contains": "проект",
+          "operation": "update",
+          "target_date": "tomorrow",
+          "referenced_task_title": "Проект"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Оплатил интернет",
+    "expected": {
+      "intent": "mark_done",
+      "tasks_match": [
+        {
+          "title_contains": "интернет",
+          "operation": "complete",
+          "referenced_task_title": "интернет"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Добавь ещё 40 минут на проект",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "проект",
+          "operation": "update",
+          "duration_delta_minutes": 40,
+          "referenced_task_title": "проект"
+        }
+      ]
+    }
+  },
+  {
+    "text": "После 15:00 подготовить документы до 18:00",
+    "expected": {
+      "intent": "add_tasks",
+      "tasks_match": [
+        {
+          "title_contains": "подготовить документы",
+          "operation": "create",
+          "scheduling_type": "flexible",
+          "earliest_start": "15:00",
+          "latest_end": "18:00"
+        }
+      ]
+    }
   }
 ]

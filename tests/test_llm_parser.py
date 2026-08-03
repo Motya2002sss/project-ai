@@ -191,6 +191,7 @@ def test_ollama_provider_returns_mocked_native_json(monkeypatch):
     assert post_calls[0][1]["think"] is False
     assert post_calls[0][1]["stream"] is False
     assert post_calls[0][1]["options"]["num_predict"] == 222
+    assert post_calls[0][1]["options"]["temperature"] == 0
 
 
 def test_ollama_empty_content_falls_back_in_normal_mode(monkeypatch, caplog):
@@ -249,6 +250,129 @@ def test_llm_content_normalizes_short_time_values_before_validation():
     assert parsed.sleep_time == "08:00"
 
 
+def test_llm_content_normalizes_adaptive_task_fields():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "созвон",
+                        "operation": "create",
+                        "scheduling_type": "fixed",
+                        "target_date": "2026-08-04",
+                        "fixed_start": "9",
+                        "fixed_end": "10",
+                        "priority": "high",
+                        "estimated_minutes": 60,
+                        "ignored_technical_field": "drop database",
+                    }
+                ],
+            }
+        ),
+        text="Завтра в 9 созвон на час",
+    )
+
+    task = parsed.tasks[0]
+    assert task.fixed_start == "09:00"
+    assert task.fixed_end == "10:00"
+    assert task.scheduling_type == "fixed"
+    assert not hasattr(task, "ignored_technical_field")
+
+
+def test_parsed_task_rejects_invalid_operation_and_time():
+    with pytest.raises(ValidationError):
+        ParsedUserMessage.model_validate(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "задача",
+                        "operation": "execute_shell",
+                    }
+                ],
+            }
+        )
+
+    with pytest.raises(ValidationError):
+        ParsedUserMessage.model_validate(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "задача",
+                        "scheduling_type": "fixed",
+                        "fixed_start": "25:00",
+                    }
+                ],
+            }
+        )
+
+
+def test_llm_fixed_event_uses_deterministic_title_and_date_metadata():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "Тенnis",
+                        "operation": "create",
+                        "scheduling_type": "fixed",
+                        "target_date": "today",
+                        "fixed_start": "19:00",
+                    }
+                ],
+            }
+        ),
+        text="Я записался на теннис в 19:00",
+    )
+
+    assert parsed.tasks[0].title == "теннис"
+    assert parsed.tasks[0].target_date is None
+
+
+def test_llm_empty_task_title_is_filled_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "tasks": [
+                    {
+                        "title": "",
+                        "operation": "create",
+                    }
+                ],
+            }
+        ),
+        text="Сегодня хочу разобрать документы",
+    )
+
+    assert parsed.tasks[0].title == "разобрать документы"
+
+
+def test_llm_unjustified_unscheduled_task_uses_deterministic_flexible_fallback():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "add_tasks",
+                "date": "today",
+                "tasks": [
+                    {
+                        "title": "Теннис",
+                        "operation": "create",
+                        "scheduling_type": "unscheduled",
+                    }
+                ],
+            }
+        ),
+        text="Сегодня добавь теннис на час",
+    )
+
+    assert parsed.tasks[0].scheduling_type == "flexible"
+    assert parsed.tasks[0].estimated_minutes == 60
+
+
 def test_llm_content_normalizes_null_lists_before_validation():
     parsed = parser._parse_llm_content(
         json.dumps(
@@ -273,7 +397,7 @@ def test_llm_content_normalizes_string_null_values_before_validation():
     parsed = parser._parse_llm_content(
         json.dumps(
             {
-                "intent": "add_tasks",
+                "intent": "show_plan",
                 "date": "null",
                 "energy_level": "none",
                 "tasks": "null",
@@ -282,7 +406,7 @@ def test_llm_content_normalizes_string_null_values_before_validation():
                 "skipped_task_titles": "none",
             }
         ),
-        text="Нужно купить продукты",
+        text="Покажи план",
     )
 
     assert parsed.date is None
@@ -434,6 +558,48 @@ def test_llm_content_polishes_reschedule_intent_over_profile():
 
     assert parsed.intent == "reschedule"
     assert parsed.work_until == "19:00"
+
+
+def test_llm_content_repairs_invalid_operation_intent_before_validation():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "update",
+                "tasks": [
+                    {
+                        "title": "проект",
+                        "operation": "update",
+                        "duration_delta_minutes": 40,
+                    }
+                ],
+            }
+        ),
+        text="Добавь ещё 40 минут на проект",
+    )
+
+    assert parsed.intent == "add_tasks"
+    assert parsed.tasks[0].operation == "update"
+    assert parsed.tasks[0].title == "проект"
+
+
+def test_llm_complete_task_populates_legacy_done_title():
+    parsed = parser._parse_llm_content(
+        json.dumps(
+            {
+                "intent": "mark_done",
+                "tasks": [
+                    {
+                        "title": "подготовку",
+                        "operation": "complete",
+                        "referenced_task_title": "подготовку",
+                    }
+                ],
+            }
+        ),
+        text="Отметь подготовку как готово",
+    )
+
+    assert parsed.done_task_title == "подготовку"
 
 
 def test_llm_content_polishes_mixed_profile_text_without_hallucinated_tasks():

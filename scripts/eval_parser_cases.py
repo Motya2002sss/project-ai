@@ -112,6 +112,29 @@ def _contains_all(actual_values: list[str], expected_values: list[str]) -> bool:
     )
 
 
+def _tasks_match(actual_tasks, expected_tasks: list[dict]) -> bool:
+    for expected_task in expected_tasks:
+        title_contains = expected_task.get("title_contains")
+        matched = False
+
+        for actual_task in actual_tasks:
+            if title_contains and not _soft_text_match(actual_task.title, title_contains):
+                continue
+
+            if all(
+                getattr(actual_task, field) == expected_value
+                for field, expected_value in expected_task.items()
+                if field != "title_contains"
+            ):
+                matched = True
+                break
+
+        if not matched:
+            return False
+
+    return True
+
+
 def _case_passes(parsed, expected: dict) -> bool:
     if parsed.intent != expected["intent"]:
         return False
@@ -134,6 +157,9 @@ def _case_passes(parsed, expected: dict) -> bool:
 
         if not _contains_all(titles, expected["tasks_contains"]):
             return False
+
+    if "tasks_match" in expected and not _tasks_match(parsed.tasks, expected["tasks_match"]):
+        return False
 
     if "task_priorities_contains" in expected:
         priorities = [task.priority for task in parsed.tasks]

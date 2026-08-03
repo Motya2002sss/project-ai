@@ -95,7 +95,8 @@ function placementsFromPlan(plan: Plan | null): Map<number, TaskPlacement> {
       taskId: item.task_id,
       startTime: item.start_time,
       endTime: item.end_time,
-      planStatus: item.status
+      planStatus: item.status,
+      unscheduledReason: item.unscheduled_reason
     });
   }
 
@@ -119,73 +120,77 @@ function mergePlacements(
 function buildPlanUpdate(
   response: MessageResponse,
   previousTasks: Task[],
-  previousPlacements: Map<number, TaskPlacement>,
   nextTasks: Task[],
   nextPlan: Plan | null
 ): PlanUpdate {
   const previousById = new Map(previousTasks.map((task) => [task.id, task]));
   const nextById = new Map(nextTasks.map((task) => [task.id, task]));
+  const affectedById = new Map(response.affected_tasks.map((task) => [task.id, task]));
   const nextPlacements = placementsFromPlan(nextPlan);
   const changes: PlanChange[] = [];
-  const seen = new Set<number>();
 
-  for (const task of response.affected_tasks) {
-    const previous = previousById.get(task.id);
-    const current = nextById.get(task.id) || task;
-    const placement = nextPlacements.get(task.id);
-    seen.add(task.id);
+  const taskForId = (taskId: number): Task | undefined =>
+    nextById.get(taskId) || affectedById.get(taskId) || previousById.get(taskId);
 
-    if (!previous) {
-      changes.push({
-        kind: "added",
-        title: current.title,
-        detail: placement?.startTime
-          ? placement.startTime.slice(0, 5)
-          : current.target_date !== localDateValue()
-            ? formatTaskDate(current.target_date)
-            : null
-      });
-      continue;
-    }
+  for (const taskId of response.plan_diff.created_task_ids) {
+    const task = taskForId(taskId);
 
-    if (previous.target_date !== current.target_date) {
-      changes.push({ kind: "moved", title: current.title, detail: formatTaskDate(current.target_date) });
-    } else if (previous.status !== current.status) {
-      changes.push({
-        kind: current.status === "done" ? "completed" : "restored",
-        title: current.title,
-        detail: current.status === "done" ? "выполнено" : "снова в плане"
-      });
-    }
+    if (!task) continue;
+
+    const placement = nextPlacements.get(taskId);
+    changes.push({
+      kind: "added",
+      title: task.title,
+      detail: placement?.startTime
+        ? placement.startTime.slice(0, 5)
+        : task.target_date !== localDateValue()
+          ? formatTaskDate(task.target_date)
+          : null
+    });
   }
 
-  for (const task of nextTasks) {
-    if (seen.has(task.id) || !previousById.has(task.id)) {
-      continue;
-    }
+  for (const taskId of response.plan_diff.updated_task_ids) {
+    const task = taskForId(taskId);
+    const previous = previousById.get(taskId);
 
-    const previousPlacement = previousPlacements.get(task.id);
-    const nextPlacement = nextPlacements.get(task.id);
-    const previousTime = previousPlacement?.startTime?.slice(0, 5) || null;
-    const nextTime = nextPlacement?.startTime?.slice(0, 5) || null;
+    if (!task) continue;
 
-    if (previousTime && !nextTime) {
-      changes.push({ kind: "unscheduled", title: task.title, detail: "без времени" });
-    } else if (nextTime && previousTime !== nextTime) {
-      changes.push({ kind: "moved", title: task.title, detail: nextTime });
-    }
+    changes.push({
+      kind: "moved",
+      title: task.title,
+      detail: previous?.target_date !== task.target_date ? formatTaskDate(task.target_date) : "обновлено"
+    });
+  }
+
+  for (const taskId of response.plan_diff.completed_task_ids) {
+    const task = taskForId(taskId);
+    if (task) changes.push({ kind: "completed", title: task.title, detail: "выполнено" });
+  }
+
+  for (const taskId of response.plan_diff.cancelled_task_ids) {
+    const task = taskForId(taskId);
+    if (task) changes.push({ kind: "cancelled", title: task.title, detail: "отменено" });
+  }
+
+  for (const moved of response.plan_diff.moved_plan_items) {
+    changes.push({ kind: "moved", title: moved.title, detail: moved.new_start.slice(0, 5) });
+  }
+
+  for (const taskId of response.plan_diff.unscheduled_task_ids) {
+    const task = taskForId(taskId);
+    if (task) changes.push({ kind: "unscheduled", title: task.title, detail: "без времени" });
   }
 
   const limitedChanges = changes.slice(0, 5);
   const goalOnly = response.affected_goals.length > 0 && limitedChanges.length === 0;
 
   return {
-    title: response.plan_summary ? "План обновлён" : "Изменения сохранены",
-    message: goalOnly
+    title: response.status === "applied" ? response.plan_summary ? "План обновлён" : "Изменения сохранены" : "Нужно уточнение",
+    message: response.clarification_question || (goalOnly
       ? "Цели обновлены. Они будут учитываться в следующих планах."
       : limitedChanges.length === 0
         ? "День актуализирован без дополнительных изменений в задачах."
-        : null,
+        : null),
     changes: limitedChanges
   };
 }
@@ -383,7 +388,6 @@ export default function App() {
     }
 
     const previousTasks = tasks.map((task) => ({ ...task }));
-    const previousPlacements = new Map(taskPlacements);
     setSubmitStatus("loading");
     setSubmitError(null);
     setComposerOpen(false);
@@ -411,7 +415,6 @@ export default function App() {
     const update = buildPlanUpdate(
       response,
       previousTasks,
-      previousPlacements,
       nextTasks,
       nextPlan
     );
@@ -419,6 +422,7 @@ export default function App() {
     setLastUpdate(update);
     setChangedTaskIds(new Set(response.affected_tasks.map((task) => task.id)));
     setDraft("");
+    setComposerOpen(response.needs_clarification);
     setSubmitStatus("ready");
 
     if (snapshot.failed > 0) {
@@ -530,6 +534,7 @@ export default function App() {
           todayTasks={todayTasks}
           scheduledTasks={scheduledTasks}
           unscheduledTasks={unscheduledTasks}
+          taskPlacements={taskPlacements}
           pendingTaskIds={pendingTaskIds}
           taskErrors={taskErrors}
           changedTaskIds={changedTaskIds}

@@ -8,9 +8,14 @@ from app.bot.main import dp
 from app.core.config import settings
 from app.llm.parser import parse_user_message
 from app.main import app
+from app.models.plan_item import PlanItem
 from app.models.task import Task
 from app.services.goal_service import suggest_tasks_from_goals
-from app.services.planning_service import rebuild_day_plan
+from app.services.planning_service import (
+    choose_best_slot,
+    find_available_slots,
+    rebuild_day_plan,
+)
 from app.services.task_service import (
     create_tasks_from_parsed_message,
     create_tasks_from_parsed_tasks,
@@ -34,12 +39,19 @@ def main() -> None:
     }
 
     assert hasattr(Task, "target_date")
+    assert hasattr(Task, "scheduling_type")
+    assert hasattr(Task, "fixed_start")
+    assert hasattr(Task, "preferred_window")
+    assert hasattr(Task, "is_locked")
+    assert hasattr(PlanItem, "unscheduled_reason")
     assert app is not None
     assert dp is not None
     assert callable(create_tasks_from_parsed_message)
     assert callable(create_tasks_from_parsed_tasks)
     assert callable(suggest_tasks_from_goals)
     assert callable(rebuild_day_plan)
+    assert callable(find_available_slots)
+    assert callable(choose_best_slot)
 
     for text, expected in samples.items():
         parsed = parse_user_message(text)
@@ -49,6 +61,17 @@ def main() -> None:
 
         if parsed.intent == "update_goals":
             assert parsed.budget_limit is None, (text, parsed.budget_limit)
+
+    fixed = parse_user_message("Сегодня в 19:00 созвон на час")
+    assert fixed.tasks[0].scheduling_type == "fixed"
+    assert fixed.tasks[0].fixed_start == "19:00"
+    assert fixed.tasks[0].estimated_minutes == 60
+
+    cancelled = parse_user_message("Зал отменяется")
+    assert cancelled.tasks[0].operation == "cancel"
+
+    recurrence = parse_user_message("Утром хожу в зал")
+    assert recurrence.tasks[0].needs_clarification is True
 
     print("mvp check ok")
 
