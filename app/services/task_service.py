@@ -93,6 +93,7 @@ def create_tasks_from_parsed_tasks(
         task_data = {
             "user_id": user.id,
             "title": title[:255],
+            "source_text": (parsed_message.raw_text[:4000] if parsed_message and parsed_message.raw_text else None),
             "priority": parsed_task.priority,
             "estimated_minutes": parsed_task.estimated_minutes,
             "target_date": target_date,

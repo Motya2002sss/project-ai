@@ -2,6 +2,15 @@ export type MessageSource = "web_text";
 export type TaskStatus = "planned" | "done";
 export type StoredTaskStatus = TaskStatus | "cancelled";
 export type LoadState = "idle" | "loading" | "ready" | "error";
+export type MessageStatus =
+  | "applied"
+  | "clarification_required"
+  | "confirmation_required"
+  | "conflict"
+  | "no_change"
+  | "unsupported_capability"
+  | "failed"
+  | "needs_clarification";
 
 export type Task = {
   id: number;
@@ -47,15 +56,64 @@ export type Plan = {
   energy_level: string | null;
   budget_limit: number | null;
   status: string;
+  version: number;
   items: PlanItem[];
 };
 
+export type InteractionOption = {
+  id: string;
+  label: string;
+  value: string;
+};
+
+export type Clarification = {
+  id: string;
+  question: string;
+  options: InteractionOption[];
+  free_text_allowed: boolean;
+  expires_at: string;
+};
+
+export type Confirmation = {
+  id: string;
+  title: string;
+  summary: string;
+  changes: PlanDiff;
+  options: InteractionOption[];
+  expires_at: string;
+  base_plan_version: number | null;
+};
+
+export type ConflictDetails = {
+  id: string | null;
+  title: string;
+  message: string;
+  options: InteractionOption[];
+  expires_at: string | null;
+};
+
+export type DaySnapshot = {
+  date: string;
+  focus_text: string;
+  progress: { done: number; total: number };
+  scheduled_items: PlanItem[];
+  unscheduled_items: PlanItem[];
+  completed_count: number;
+  total_count: number;
+  day_context: { energy_level: string | null; budget_limit: number | null };
+  tasks: Task[];
+  goals: Goal[];
+  plan: Plan;
+  plan_version: number;
+};
+
 export type MessageResponse = {
+  request_id: string | null;
   user_external_id: string;
   source: MessageSource;
   intent: string;
   parsed: Record<string, unknown>;
-  status: "applied" | "needs_clarification" | "conflict";
+  status: MessageStatus;
   needs_clarification: boolean;
   clarification_question: string | null;
   reply_text: string;
@@ -64,6 +122,10 @@ export type MessageResponse = {
   affected_goals: Goal[];
   plan_summary: Plan | null;
   plan_diff: PlanDiff;
+  clarification: Clarification | null;
+  confirmation: Confirmation | null;
+  conflict_details: ConflictDetails | null;
+  day_snapshot: DaySnapshot | null;
 };
 
 export type MovedPlanItem = {
@@ -88,6 +150,13 @@ export type TodayData = {
   plan: Plan;
   tasks: Task[];
   goals: Goal[];
+};
+
+export type MessageSubmission = {
+  text: string;
+  requestId: string;
+  interactionId?: string | null;
+  optionId?: string | null;
 };
 
 export type TaskPlacement = {

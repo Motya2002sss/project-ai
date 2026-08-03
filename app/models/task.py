@@ -14,6 +14,7 @@ class Task(Base):
     goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id", ondelete="SET NULL"), nullable=True, index=True)
 
     title: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     priority: Mapped[str] = mapped_column(String(32), nullable=False, default="medium")
     estimated_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)

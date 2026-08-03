@@ -452,12 +452,30 @@ def build_day_plan_result(
 
     day_plan = get_or_create_day_plan(db, user, resolved_date, commit=False)
 
+    previous_plan_context = (
+        day_plan.energy_level,
+        day_plan.budget_limit,
+        day_plan.status,
+    )
+
     if parsed_message:
         day_plan.energy_level = parsed_message.energy_level or day_plan.energy_level
         day_plan.budget_limit = parsed_message.budget_limit or day_plan.budget_limit
         day_plan.summary = parsed_message.raw_text or "Автоматический план дня"
 
     existing_items = list(day_plan.items)
+    previous_items_signature = sorted(
+        (
+            item.task_id,
+            item.start_time,
+            item.end_time,
+            item.title,
+            item.item_type,
+            item.status,
+            item.unscheduled_reason,
+        )
+        for item in existing_items
+    )
     existing_by_task = {
         item.task_id: item
         for item in existing_items
@@ -568,7 +586,8 @@ def build_day_plan_result(
 
     for task in flexible_tasks:
         if task.scheduling_type == "unscheduled":
-            append_item(task, status="not_scheduled", reason="needs_clarification")
+            reason = "needs_clarification" if task.estimated_minutes else "missing_duration"
+            append_item(task, status="not_scheduled", reason=reason)
             unscheduled_task_ids.append(task.id)
             scheduled_task_ids.add(task.id)
             continue
@@ -624,6 +643,27 @@ def build_day_plan_result(
         occupied.append(chosen)
 
     day_plan.status = "conflict" if conflicts else "overloaded" if unscheduled_task_ids else "draft"
+    current_items_signature = sorted(
+        (
+            item.task_id,
+            item.start_time,
+            item.end_time,
+            item.title,
+            item.item_type,
+            item.status,
+            item.unscheduled_reason,
+        )
+        for item in day_plan.items
+    )
+    current_plan_context = (
+        day_plan.energy_level,
+        day_plan.budget_limit,
+        day_plan.status,
+    )
+
+    if previous_items_signature != current_items_signature or previous_plan_context != current_plan_context:
+        day_plan.version += 1
+
     db.flush()
     assert_plan_has_no_overlaps(day_plan, user)
 
@@ -717,6 +757,7 @@ def format_day_plan(day_plan: DayPlan) -> str:
                 "fixed_time_passed": "указанное время уже прошло",
                 "missing_fixed_time": "нужно уточнить время",
                 "needs_clarification": "нужно уточнение",
+                "missing_duration": "не указана длительность",
             }
             reason = reason_map.get(item.unscheduled_reason or "", "не удалось безопасно поставить в план")
             lines.append(f"— {item.title}: {reason}")

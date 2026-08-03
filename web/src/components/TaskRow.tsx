@@ -35,7 +35,8 @@ function formatUnscheduledReason(reason: string | null | undefined): string {
     fixed_time_conflict: "Конфликт времени",
     fixed_time_passed: "Указанное время прошло",
     missing_fixed_time: "Нужно уточнить время",
-    needs_clarification: "Нужно уточнение"
+    needs_clarification: "Нужно уточнение",
+    missing_duration: "Нужно указать длительность"
   };
 
   return reason ? labels[reason] || "Без времени" : "Без времени";

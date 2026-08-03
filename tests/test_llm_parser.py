@@ -65,10 +65,11 @@ def test_llm_parser_returns_mocked_llm_json(monkeypatch):
     create_calls = []
 
     class FakeOpenAI:
-        def __init__(self, api_key, base_url=None, timeout=None):
+        def __init__(self, api_key, base_url=None, timeout=None, max_retries=None):
             assert api_key == "test-key"
             assert base_url == "http://localhost:11434/v1"
             assert timeout == 7
+            assert max_retries == 0
             self.chat = SimpleNamespace(
                 completions=SimpleNamespace(create=self._create_completion)
             )
@@ -159,7 +160,8 @@ def test_ollama_provider_returns_mocked_native_json(monkeypatch):
 
     class FakeHttpxClient:
         def __init__(self, timeout=None):
-            assert timeout == 11
+            assert timeout.connect == 3
+            assert timeout.read == 11
 
         def __enter__(self):
             return self

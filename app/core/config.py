@@ -21,6 +21,10 @@ class Settings(BaseSettings):
 
     plan_start_buffer_minutes: int = 30
     default_plan_start_time: str = "18:30"
+    message_request_timeout_seconds: float = 15.0
+    message_slow_notice_seconds: float = 5.0
+    interaction_ttl_minutes: int = 30
+    idempotency_ttl_hours: int = 24
 
     llm_enabled: bool = False
     llm_provider: str = "mock"

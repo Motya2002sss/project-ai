@@ -81,5 +81,5 @@ def test_text_handler_uses_shared_pipeline_without_duplicating_telegram_user(
     assert len(users) == 1
     assert users[0].telegram_id == FakeTelegramUser.id
     assert users[0].external_id == f"telegram:{FakeTelegramUser.id}"
-    assert [task.title for task in tasks] == ["разобрать документы"]
+    assert [task.title for task in tasks] == ["Разобрать документы"]
     assert tasks[0].user_id == users[0].id

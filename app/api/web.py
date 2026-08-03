@@ -5,6 +5,7 @@ from app.db.session import get_db
 from app.llm.schemas import ParsedUserMessage
 from app.schemas.api import (
     DateSelector,
+    DaySnapshotResponse,
     GoalResponse,
     MessageRequest,
     MessageResponse,
@@ -17,6 +18,7 @@ from app.schemas.api import (
 from app.services.goal_service import list_active_goals
 from app.services.message_service import (
     goal_to_response,
+    day_snapshot_to_response,
     plan_to_response,
     process_user_message,
     profile_to_response,
@@ -40,7 +42,22 @@ def process_message(
         user_external_id=request.user_external_id,
         text=request.text,
         source=request.source,
+        request_id=request.request_id,
+        interaction_id=request.interaction_id,
+        option_id=request.option_id,
     )
+
+
+@router.get("/day/{user_external_id}", response_model=DaySnapshotResponse)
+def get_day_snapshot(
+    user_external_id: str,
+    date: DateSelector = "today",
+    db: Session = Depends(get_db),
+) -> DaySnapshotResponse:
+    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    parsed_message = ParsedUserMessage(intent="show_plan", date=date)
+    day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
+    return day_snapshot_to_response(db, user, day_plan)
 
 
 @router.get("/profile/{user_external_id}", response_model=ProfileResponse)

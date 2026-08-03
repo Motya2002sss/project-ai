@@ -21,6 +21,7 @@ class DayPlan(Base):
     energy_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
     budget_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 

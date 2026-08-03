@@ -46,7 +46,6 @@ export default function TodayPlan({
   onStatusChange,
   onRetry
 }: TodayPlanProps) {
-  const allDone = todayTasks.length > 0 && todayTasks.every((task) => task.status === "done");
   const initialLoading = tasksStatus === "loading" && todayTasks.length === 0;
 
   if (initialLoading) {
@@ -73,16 +72,6 @@ export default function TodayPlan({
 
   return (
     <div className="task-sections">
-      {allDone && (
-        <section className="all-done-state" aria-labelledby="all-done-title">
-          <span aria-hidden="true">✓</span>
-          <div>
-            <h2 id="all-done-title">На сегодня достаточно.</h2>
-            <p>Все запланированные шаги завершены.</p>
-          </div>
-        </section>
-      )}
-
       {scheduledTasks.length > 0 && (
         <section className="task-section scheduled-section" aria-labelledby="scheduled-title">
           <div className="section-heading">
@@ -110,7 +99,7 @@ export default function TodayPlan({
       {unscheduledTasks.length > 0 && (
         <section className="task-section unscheduled-section" aria-labelledby="unscheduled-title">
           <div className="section-heading">
-            <h2 id="unscheduled-title">{allDone ? "Завершено" : "Без времени"}</h2>
+            <h2 id="unscheduled-title">Без времени</h2>
             <span>{unscheduledTasks.length}</span>
           </div>
           <ul className="task-list unscheduled-list">

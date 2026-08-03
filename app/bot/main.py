@@ -1,9 +1,9 @@
 import asyncio
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -20,6 +20,34 @@ from app.services.user_service import get_or_create_user
 logging.basicConfig(level=logging.INFO)
 
 dp = Dispatcher()
+
+
+def _response_keyboard(response) -> InlineKeyboardMarkup | None:
+    interaction = response.clarification or response.confirmation or response.conflict_details
+
+    if interaction is None or not interaction.id or not interaction.options:
+        return None
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=option.label,
+                    callback_data=f"planner:{interaction.id}:{option.id}",
+                )
+            ]
+            for option in interaction.options
+        ]
+    )
+
+
+async def _answer_planner_response(message: Message, response) -> None:
+    keyboard = _response_keyboard(response)
+
+    if keyboard:
+        await message.answer(response.reply_text, reply_markup=keyboard)
+    else:
+        await message.answer(response.reply_text)
 
 
 def _planning_context_hint(user) -> str:
@@ -181,9 +209,39 @@ async def handle_text_message(message: Message) -> None:
             source="telegram_text",
             user_name=telegram_user.full_name,
             telegram_id=telegram_user.id,
+            request_id=(f"telegram-message:{message.message_id}" if getattr(message, "message_id", None) else None),
         )
 
-    await message.answer(response.reply_text)
+    await _answer_planner_response(message, response)
+
+
+@dp.callback_query(F.data.startswith("planner:"))
+async def handle_planner_callback(callback: CallbackQuery) -> None:
+    telegram_user = callback.from_user
+    callback_data = callback.data or ""
+    parts = callback_data.split(":", maxsplit=2)
+
+    if len(parts) != 3 or callback.message is None:
+        await callback.answer("Не удалось прочитать ответ.", show_alert=True)
+        return
+
+    _, interaction_id, option_id = parts
+
+    with SessionLocal() as db:
+        response = process_user_message(
+            db=db,
+            user_external_id=f"telegram:{telegram_user.id}",
+            text=option_id,
+            source="telegram_text",
+            user_name=telegram_user.full_name,
+            telegram_id=telegram_user.id,
+            request_id=f"telegram-callback:{callback.id}",
+            interaction_id=interaction_id,
+            option_id=option_id,
+        )
+
+    await callback.answer()
+    await _answer_planner_response(callback.message, response)
 
 
 async def main() -> None:

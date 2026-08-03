@@ -341,7 +341,7 @@ def test_fixed_conflict_rolls_back_new_task(db: Session):
     tasks = db.query(Task).filter(Task.user_id == 1).all()
     assert response.status == "conflict"
     assert response.needs_clarification is True
-    assert [task.title for task in tasks] == ["теннис"]
+    assert [task.title for task in tasks] == ["Теннис"]
 
 
 def test_morning_task_is_not_scheduled_in_evening(db: Session, monkeypatch):
@@ -368,7 +368,7 @@ def test_recurrence_ambiguity_does_not_create_task(db: Session):
         "web_text",
     )
 
-    assert response.status == "needs_clarification"
+    assert response.status == "clarification_required"
     assert db.query(Task).count() == 0
 
 

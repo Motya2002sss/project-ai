@@ -1,59 +1,65 @@
-import type { Goal, MessageResponse, Plan, Task, TaskStatus, TodayData } from "./types";
+import type { DaySnapshot, MessageResponse, MessageSubmission, Task, TaskStatus } from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-async function requestJson<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: {
-      "Content-Type": "application/json",
-      ...options?.headers
-    },
-    ...options
-  });
+const MESSAGE_TIMEOUT_MS = 15_000;
 
-  if (!response.ok) {
-    throw new Error(`API request failed with status ${response.status}`);
+async function requestJson<T>(
+  path: string,
+  options?: RequestInit,
+  timeoutMs = MESSAGE_TIMEOUT_MS
+): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  const externalSignal = options?.signal;
+  const abortFromExternal = () => controller.abort();
+  externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+
+  try {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers
+      },
+      ...options,
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`API request failed with status ${response.status}`);
+    }
+
+    return response.json() as Promise<T>;
+  } finally {
+    window.clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
   }
-
-  return response.json() as Promise<T>;
 }
 
 export function checkHealth(): Promise<{ status: string }> {
   return requestJson<{ status: string }>("/health");
 }
 
-export function getTodayPlan(userExternalId: string): Promise<Plan> {
+export function getTodayData(userExternalId: string): Promise<DaySnapshot> {
   const encodedUserId = encodeURIComponent(userExternalId);
-  return requestJson<Plan>(`/api/plan/${encodedUserId}?date=today`);
+  return requestJson<DaySnapshot>(`/api/day/${encodedUserId}?date=today`);
 }
 
-export function getTodayTasks(userExternalId: string): Promise<Task[]> {
-  const encodedUserId = encodeURIComponent(userExternalId);
-  return requestJson<Task[]>(`/api/tasks/${encodedUserId}?date=today`);
-}
-
-export function getGoals(userExternalId: string): Promise<Goal[]> {
-  const encodedUserId = encodeURIComponent(userExternalId);
-  return requestJson<Goal[]>(`/api/goals/${encodedUserId}`);
-}
-
-export async function getTodayData(userExternalId: string): Promise<TodayData> {
-  const plan = await getTodayPlan(userExternalId);
-  const [tasks, goals] = await Promise.all([
-    getTodayTasks(userExternalId),
-    getGoals(userExternalId)
-  ]);
-
-  return { plan, tasks, goals };
-}
-
-export function processMessage(userExternalId: string, text: string): Promise<MessageResponse> {
+export function processMessage(
+  userExternalId: string,
+  submission: MessageSubmission,
+  signal?: AbortSignal
+): Promise<MessageResponse> {
   return requestJson<MessageResponse>("/api/message", {
     method: "POST",
+    signal,
     body: JSON.stringify({
       user_external_id: userExternalId,
       source: "web_text",
-      text
+      text: submission.text,
+      request_id: submission.requestId,
+      interaction_id: submission.interactionId || undefined,
+      option_id: submission.optionId || undefined
     })
   });
 }

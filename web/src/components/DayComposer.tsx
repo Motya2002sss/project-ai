@@ -1,32 +1,53 @@
 import { FormEvent, useEffect, useRef } from "react";
 
-import type { LoadState } from "../types";
+import type { ComposerPhase } from "../composerState";
+import type {
+  Clarification,
+  Confirmation,
+  ConflictDetails,
+  InteractionOption
+} from "../types";
 
 type DayComposerProps = {
   open: boolean;
   draft: string;
-  status: LoadState;
+  phase: ComposerPhase;
+  slow: boolean;
   error: string | null;
+  clarification: Clarification | null;
+  confirmation: Confirmation | null;
+  conflict: ConflictDetails | null;
   disabled?: boolean;
   onOpenChange: (open: boolean) => void;
   onDraftChange: (value: string) => void;
   onSubmit: () => Promise<void>;
+  onOption: (interactionId: string, option: InteractionOption) => Promise<void>;
 };
 
 export default function DayComposer({
   open,
   draft,
-  status,
+  phase,
+  slow,
   error,
+  clarification,
+  confirmation,
+  conflict,
   disabled = false,
   onOpenChange,
   onDraftChange,
-  onSubmit
+  onSubmit,
+  onOption
 }: DayComposerProps) {
   const triggerRef = useRef<HTMLButtonElement>(null);
   const sheetRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const submitting = status === "loading";
+  const submitting = phase === "submitting";
+  const interaction = clarification || confirmation || conflict;
+  const interactionId = clarification?.id || confirmation?.id || conflict?.id || null;
+  const interactionTitle = confirmation?.title || conflict?.title || clarification?.question || null;
+  const interactionBody = confirmation?.summary || conflict?.message || null;
+  const interactionOptions = interaction?.options || [];
 
   useEffect(() => {
     if (!open) {
@@ -107,7 +128,7 @@ export default function DayComposer({
             <span className="processing-indicator" aria-hidden="true" />
             <span>
               <strong>Пересобираю день…</strong>
-              <small>Текст сохранён</small>
+              <small>{slow ? "Это занимает чуть дольше обычного. Текст сохранён." : "Текст сохранён"}</small>
             </span>
           </div>
         ) : (
@@ -161,13 +182,34 @@ export default function DayComposer({
             </header>
 
             <form onSubmit={handleSubmit}>
+              {interaction && (
+                <section className="composer-interaction" aria-live="polite">
+                  {interactionTitle && <h3>{interactionTitle}</h3>}
+                  {interactionBody && interactionBody !== interactionTitle && <p>{interactionBody}</p>}
+                  {interactionOptions.length > 0 && interactionId && (
+                    <div className="interaction-options" role="group" aria-label="Варианты ответа">
+                      {interactionOptions.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          onClick={() => void onOption(interactionId, option)}
+                          disabled={submitting}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </section>
+              )}
+
               <label className="sr-only" htmlFor="day-message">Что изменилось в твоём дне?</label>
               <textarea
                 ref={textareaRef}
                 id="day-message"
                 value={draft}
                 onChange={(event) => onDraftChange(event.target.value)}
-                placeholder="Например: задержался до восьми, сил мало, но появился важный звонок"
+                placeholder={interaction ? "Или ответь своими словами" : "Например: задержался до восьми, сил мало, но появился важный звонок"}
                 rows={5}
                 disabled={submitting}
               />
@@ -180,7 +222,7 @@ export default function DayComposer({
                 <div className="composer-error" role="alert">
                   <span className="error-symbol" aria-hidden="true">!</span>
                   <span>
-                    <strong>Не получилось обновить план</strong>
+                    <strong>{error}</strong>
                     <small>Текст сохранён</small>
                   </span>
                 </div>

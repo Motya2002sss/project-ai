@@ -4,17 +4,34 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-MessageSource = Literal["web_text", "telegram_text", "telegram_voice_transcript"]
+MessageSource = Literal[
+    "web_text",
+    "telegram_text",
+    "telegram_voice_transcript",
+    "voice_transcript",
+]
 DateSelector = Literal["today", "tomorrow"]
 TaskStatus = Literal["planned", "done"]
 StoredTaskStatus = Literal["planned", "done", "cancelled"]
-MessageStatus = Literal["applied", "needs_clarification", "conflict"]
+MessageStatus = Literal[
+    "applied",
+    "clarification_required",
+    "confirmation_required",
+    "conflict",
+    "no_change",
+    "unsupported_capability",
+    "failed",
+    "needs_clarification",
+]
 
 
 class MessageRequest(BaseModel):
     user_external_id: str = Field(min_length=1, max_length=255)
     text: str = Field(min_length=1, max_length=4000)
     source: MessageSource = "web_text"
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+    interaction_id: str | None = Field(default=None, min_length=1, max_length=36)
+    option_id: str | None = Field(default=None, min_length=1, max_length=64)
 
 
 class TaskDoneRequest(BaseModel):
@@ -79,6 +96,7 @@ class PlanResponse(BaseModel):
     energy_level: str | None
     budget_limit: int | None
     status: str
+    version: int = Field(ge=0)
     items: list[PlanItemResponse] = Field(default_factory=list)
 
 
@@ -100,7 +118,65 @@ class PlanDiffResponse(BaseModel):
     clarification: str | None = None
 
 
+class InteractionOptionResponse(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    label: str = Field(min_length=1, max_length=160)
+    value: str = Field(min_length=1, max_length=255)
+
+
+class ClarificationResponse(BaseModel):
+    id: str
+    question: str
+    options: list[InteractionOptionResponse] = Field(default_factory=list)
+    free_text_allowed: bool = True
+    expires_at: datetime
+
+
+class ConfirmationResponse(BaseModel):
+    id: str
+    title: str
+    summary: str
+    changes: PlanDiffResponse = Field(default_factory=PlanDiffResponse)
+    options: list[InteractionOptionResponse] = Field(default_factory=list)
+    expires_at: datetime
+    base_plan_version: int | None = None
+
+
+class ConflictResponse(BaseModel):
+    id: str | None = None
+    title: str = "Не удалось встроить изменение"
+    message: str
+    options: list[InteractionOptionResponse] = Field(default_factory=list)
+    expires_at: datetime | None = None
+
+
+class DayProgressResponse(BaseModel):
+    done: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
+class DayContextResponse(BaseModel):
+    energy_level: str | None = None
+    budget_limit: int | None = None
+
+
+class DaySnapshotResponse(BaseModel):
+    date: date
+    focus_text: str = Field(min_length=1, max_length=180)
+    progress: DayProgressResponse
+    scheduled_items: list[PlanItemResponse] = Field(default_factory=list)
+    unscheduled_items: list[PlanItemResponse] = Field(default_factory=list)
+    completed_count: int = Field(ge=0)
+    total_count: int = Field(ge=0)
+    day_context: DayContextResponse
+    tasks: list[TaskResponse] = Field(default_factory=list)
+    goals: list[GoalResponse] = Field(default_factory=list)
+    plan: PlanResponse
+    plan_version: int = Field(ge=0)
+
+
 class MessageResponse(BaseModel):
+    request_id: str | None = None
     user_external_id: str
     source: MessageSource
     intent: str
@@ -115,3 +191,7 @@ class MessageResponse(BaseModel):
     profile: ProfileResponse | None = None
     plan_summary: PlanResponse | None = None
     plan_diff: PlanDiffResponse = Field(default_factory=PlanDiffResponse)
+    clarification: ClarificationResponse | None = None
+    confirmation: ConfirmationResponse | None = None
+    conflict_details: ConflictResponse | None = None
+    day_snapshot: DaySnapshotResponse | None = None

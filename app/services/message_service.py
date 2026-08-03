@@ -1,5 +1,9 @@
+import logging
+import re
 from dataclasses import dataclass
 from datetime import date, time
+from time import perf_counter
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -10,11 +14,18 @@ from app.models.goal import Goal
 from app.models.task import Task
 from app.models.user import User
 from app.schemas.api import (
+    ClarificationResponse,
+    ConfirmationResponse,
+    ConflictResponse,
+    InteractionOptionResponse,
     GoalResponse,
     MessageResponse,
     MessageSource,
     MovedPlanItemResponse,
     PlanDiffResponse,
+    DayContextResponse,
+    DayProgressResponse,
+    DaySnapshotResponse,
     PlanItemResponse,
     PlanResponse,
     ProfileResponse,
@@ -25,6 +36,25 @@ from app.services.goal_service import (
     format_goals,
     list_active_goals,
     suggest_tasks_from_goals,
+)
+from app.services.idempotency_service import (
+    complete_message_request,
+    fail_message_request,
+    reserve_message_request,
+)
+from app.services.interaction_service import (
+    create_pending_interaction,
+    get_pending_interaction,
+    resolve_interaction,
+)
+from app.services.message_policy import (
+    detect_tracking_ambiguity,
+    interaction_option,
+    is_cancel_message,
+    is_capability_request,
+    is_low_energy_replan_request,
+    normalize_parsed_tasks,
+    task_for_one_time_tracking,
 )
 from app.services.planning_service import (
     PlanBuildResult,
@@ -42,8 +72,17 @@ from app.services.task_service import (
     find_active_tasks_by_titles,
     format_tasks,
     list_active_tasks,
+    list_user_tasks,
     mark_tasks_done_by_titles,
 )
+from app.services.user_service import (
+    format_user_profile,
+    get_or_create_user_by_external_id,
+    update_user_profile_from_parsed_message,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -53,11 +92,6 @@ class _PlanPlacementSnapshot:
     start_time: time | None
     end_time: time | None
     status: str
-from app.services.user_service import (
-    format_user_profile,
-    get_or_create_user_by_external_id,
-    update_user_profile_from_parsed_message,
-)
 
 
 def _planning_context_hint(user: User) -> str:
@@ -130,6 +164,7 @@ def plan_to_response(day_plan: DayPlan) -> PlanResponse:
         energy_level=day_plan.energy_level,
         budget_limit=day_plan.budget_limit,
         status=day_plan.status,
+        version=day_plan.version,
         items=[
             PlanItemResponse(
                 id=item.id,
@@ -143,6 +178,42 @@ def plan_to_response(day_plan: DayPlan) -> PlanResponse:
             )
             for item in day_plan.items
         ],
+    )
+
+
+def day_snapshot_to_response(
+    db: Session,
+    user: User,
+    day_plan: DayPlan,
+) -> DaySnapshotResponse:
+    plan = plan_to_response(day_plan)
+    tasks = list_user_tasks(db=db, user=user, target_date=day_plan.date)
+    goals = list_active_goals(db=db, user=user)
+    task_responses = [task_to_response(task) for task in tasks]
+    done_count = sum(task.status == "done" for task in tasks)
+    scheduled_items = [
+        item
+        for item in plan.items
+        if item.start_time is not None and item.status in {"planned", "done"}
+    ]
+    unscheduled_items = [item for item in plan.items if item not in scheduled_items]
+
+    return DaySnapshotResponse(
+        date=day_plan.date,
+        focus_text=plan.focus_text,
+        progress=DayProgressResponse(done=done_count, total=len(tasks)),
+        scheduled_items=scheduled_items,
+        unscheduled_items=unscheduled_items,
+        completed_count=done_count,
+        total_count=len(tasks),
+        day_context=DayContextResponse(
+            energy_level=day_plan.energy_level,
+            budget_limit=day_plan.budget_limit,
+        ),
+        tasks=task_responses,
+        goals=[goal_to_response(goal) for goal in goals],
+        plan=plan,
+        plan_version=day_plan.version,
     )
 
 
@@ -276,6 +347,9 @@ def _base_response(
     status: str = "applied",
     clarification_question: str | None = None,
     plan_diff: PlanDiffResponse | None = None,
+    clarification: ClarificationResponse | None = None,
+    confirmation: ConfirmationResponse | None = None,
+    conflict_details: ConflictResponse | None = None,
 ) -> MessageResponse:
     return MessageResponse(
         user_external_id=user_external_id,
@@ -283,7 +357,11 @@ def _base_response(
         intent=parsed_message.intent,
         parsed=parsed_message.model_dump(mode="json"),
         status=status,
-        needs_clarification=status in {"needs_clarification", "conflict"},
+        needs_clarification=status in {
+            "needs_clarification",
+            "clarification_required",
+            "conflict",
+        },
         clarification_question=clarification_question,
         reply_text=reply_text,
         summary=reply_text,
@@ -292,6 +370,9 @@ def _base_response(
         profile=profile_to_response(user, user_external_id) if user else None,
         plan_summary=plan_to_response(day_plan) if day_plan else None,
         plan_diff=plan_diff or PlanDiffResponse(),
+        clarification=clarification,
+        confirmation=confirmation,
+        conflict_details=conflict_details,
     )
 
 
@@ -333,7 +414,7 @@ def _process_task_operations_message(
                 source,
                 parsed_message,
                 question,
-                status="needs_clarification",
+                status="clarification_required",
                 clarification_question=question,
                 plan_diff=PlanDiffResponse(clarification=question),
             )
@@ -404,6 +485,8 @@ def _process_task_operations_message(
     )
     reply_text = _task_mutation_reply(mutation, selected_result.day_plan, user)
 
+    response_status = "applied" if affected_tasks else "no_change"
+
     return _base_response(
         user_external_id,
         source,
@@ -412,25 +495,17 @@ def _process_task_operations_message(
         affected_tasks=affected_tasks,
         day_plan=selected_result.day_plan,
         plan_diff=plan_diff,
+        status=response_status,
     )
 
 
-def process_user_message(
+def _process_parsed_user_message(
     db: Session,
+    user: User,
     user_external_id: str,
-    text: str,
+    parsed_message: ParsedUserMessage,
     source: MessageSource = "telegram_text",
-    user_name: str | None = None,
-    telegram_id: int | None = None,
 ) -> MessageResponse:
-    parsed_message = parse_user_message(text)
-    user = get_or_create_user_by_external_id(
-        db=db,
-        external_id=user_external_id,
-        name=user_name,
-        telegram_id=telegram_id,
-    )
-
     if parsed_message.intent in {"add_tasks", "mark_done"} or (
         parsed_message.intent == "reschedule" and parsed_message.tasks
     ):
@@ -776,3 +851,904 @@ def process_user_message(
 
     reply_text = "Не понял, какое изменение нужно внести. Опиши задачу или ограничение другими словами."
     return _base_response(user_external_id, source, parsed_message, reply_text)
+
+
+def _option_models(options: list[dict]) -> list[InteractionOptionResponse]:
+    return [InteractionOptionResponse.model_validate(option) for option in options]
+
+
+def _clarification_payload(interaction) -> ClarificationResponse:
+    return ClarificationResponse(
+        id=interaction.id,
+        question=interaction.question or "Уточни, что нужно сделать.",
+        options=_option_models(interaction.options),
+        free_text_allowed=True,
+        expires_at=interaction.expires_at,
+    )
+
+
+def _confirmation_payload(interaction) -> ConfirmationResponse:
+    context = interaction.context or {}
+    return ConfirmationResponse(
+        id=interaction.id,
+        title=context.get("title", "Применить изменение?"),
+        summary=context.get("summary", interaction.question or "Проверь изменение перед применением."),
+        options=_option_models(interaction.options),
+        expires_at=interaction.expires_at,
+        base_plan_version=interaction.base_plan_version,
+    )
+
+
+def _conflict_payload(interaction, message: str) -> ConflictResponse:
+    return ConflictResponse(
+        id=interaction.id,
+        message=message,
+        options=_option_models(interaction.options),
+        expires_at=interaction.expires_at,
+    )
+
+
+def _current_plan_version(db: Session, user: User, plan_date: date) -> int:
+    plan = (
+        db.query(DayPlan)
+        .filter(DayPlan.user_id == user.id, DayPlan.date == plan_date)
+        .one_or_none()
+    )
+    return plan.version if plan else 0
+
+
+def _build_tracking_clarification(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+    *,
+    subject: str,
+    one_time_title: str,
+    routine_title: str,
+) -> MessageResponse:
+    options = [
+        {
+            "id": "routine",
+            "label": f"Ежедневно напоминать: {routine_title}",
+            "value": "ежедневное напоминание",
+        },
+        {
+            "id": "one_time",
+            "label": "Разовую задачу на сегодня",
+            "value": "разовая задача",
+        },
+        {
+            "id": "capability",
+            "label": "Отдельный трекер",
+            "value": "отдельный трекер",
+        },
+    ]
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="clarification",
+        original_message=parsed_message.raw_text or subject,
+        context={
+            "flow": "tracking_kind",
+            "subject": subject,
+            "one_time_title": one_time_title,
+            "routine_title": routine_title,
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question="Что именно добавить?",
+        options=options,
+    )
+    clarification = _clarification_payload(interaction)
+    reply = (
+        "Что именно добавить?\n\n"
+        f"• Ежедневно напоминать: {routine_title}\n"
+        "• Разовую задачу на сегодня\n"
+        "• Отдельный трекер\n\n"
+        "Можно выбрать вариант или ответить своими словами."
+    )
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        reply,
+        status="clarification_required",
+        clarification_question=clarification.question,
+        clarification=clarification,
+        plan_diff=PlanDiffResponse(clarification=clarification.question),
+    )
+
+
+def _create_routine_confirmation(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+    *,
+    title: str,
+    preferred_window: str,
+) -> MessageResponse:
+    window_labels = {
+        "morning": "утром",
+        "afternoon": "днём",
+        "evening": "вечером",
+    }
+    window_label = window_labels.get(preferred_window, preferred_window)
+    summary = f"{title}. Каждый день · {window_label}."
+    options = [
+        {"id": "apply", "label": "Применить", "value": "применить"},
+        {"id": "edit", "label": "Изменить", "value": "изменить"},
+        {"id": "cancel", "label": "Отмена", "value": "отмена"},
+    ]
+    target_date = get_plan_date(parsed_message, user=user)
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="confirmation",
+        original_message=parsed_message.raw_text or title,
+        context={
+            "flow": "create_routine",
+            "title": "Добавить ежедневное напоминание?",
+            "summary": summary,
+            "routine_title": title,
+            "cadence": "daily",
+            "preferred_window": preferred_window,
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question=summary,
+        options=options,
+        base_plan_version=_current_plan_version(db, user, target_date),
+    )
+    confirmation = _confirmation_payload(interaction)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        f"{confirmation.title}\n\n{confirmation.summary}",
+        status="confirmation_required",
+        confirmation=confirmation,
+    )
+
+
+def _build_low_energy_confirmation(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse | None:
+    plan_date = get_plan_date(parsed_message, user=user)
+    day_plan = rebuild_day_plan(db=db, user=user, plan_date=plan_date)
+    references = {
+        (task.referenced_task_title or task.title).lower().replace("ё", "е")
+        for task in parsed_message.tasks
+        if task.referenced_task_title or task.title
+    }
+    candidates = [
+        task
+        for task in list_active_tasks(db=db, user=user, target_date=plan_date)
+        if task.scheduling_type != "fixed"
+        and not task.is_locked
+        and task.priority != "high"
+        and all(
+            reference not in task.title.lower().replace("ё", "е")
+            and task.title.lower().replace("ё", "е") not in reference
+            for reference in references
+        )
+    ]
+
+    if not candidates:
+        return None
+
+    moved_lines = "\n".join(f"→ {task.title} — на завтра" for task in candidates)
+    summary = "Чтобы оставить главное, предлагаю:\n" + moved_lines
+    options = [
+        {"id": "apply", "label": "Применить изменения", "value": "применить"},
+        {"id": "cancel", "label": "Оставить как есть", "value": "отмена"},
+    ]
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="confirmation",
+        original_message=parsed_message.raw_text or "",
+        context={
+            "flow": "low_energy_replan",
+            "title": "Освободить день?",
+            "summary": summary,
+            "move_task_ids": [task.id for task in candidates],
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question=summary,
+        options=options,
+        base_plan_version=day_plan.version,
+    )
+    confirmation = _confirmation_payload(interaction)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        f"{confirmation.title}\n\n{confirmation.summary}",
+        status="confirmation_required",
+        confirmation=confirmation,
+        day_plan=day_plan,
+    )
+
+
+def _apply_low_energy_replan(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+    interaction,
+) -> MessageResponse:
+    user = db.query(User).filter(User.id == user.id).with_for_update().one()
+    plan_date = get_plan_date(parsed_message, user=user)
+    current_version = _current_plan_version(db, user, plan_date)
+
+    if interaction.base_plan_version != current_version:
+        resolve_interaction(db, interaction, status="stale")
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            "План уже изменился. Повтори запрос, и я соберу актуальное предложение.",
+            status="no_change",
+        )
+
+    before = _snapshot_plan_placements(db, user)
+
+    try:
+        resolve_interaction(db, interaction, commit=False)
+        mutation = apply_parsed_task_operations(
+            db=db,
+            user=user,
+            parsed_message=parsed_message,
+            commit=False,
+        )
+
+        if mutation.needs_clarification:
+            db.rollback()
+            question = mutation.clarification_question or "Уточни, какую задачу изменить."
+            return _base_response(
+                user_external_id,
+                source,
+                parsed_message,
+                question,
+                status="clarification_required",
+                clarification_question=question,
+                plan_diff=PlanDiffResponse(clarification=question),
+            )
+
+        tomorrow = plan_date.fromordinal(plan_date.toordinal() + 1)
+        move_ids = set((interaction.context or {}).get("move_task_ids", []))
+        moved_tasks = (
+            db.query(Task)
+            .filter(
+                Task.user_id == user.id,
+                Task.id.in_(move_ids),
+                Task.target_date == plan_date,
+                Task.status == "planned",
+            )
+            .all()
+            if move_ids
+            else []
+        )
+
+        for task in moved_tasks:
+            task.target_date = tomorrow
+
+        mutation.updated.extend(task for task in moved_tasks if task not in mutation.updated)
+        mutation.affected_dates.update({plan_date, tomorrow})
+        plan_results = [
+            build_day_plan_result(
+                db=db,
+                user=user,
+                parsed_message=parsed_message if affected_date == plan_date else None,
+                plan_date=affected_date,
+                commit=False,
+            )
+            for affected_date in sorted(mutation.affected_dates)
+        ]
+        conflicts = [conflict for result in plan_results for conflict in result.conflicts]
+
+        if conflicts:
+            db.rollback()
+            message = conflicts[0].message
+            return _base_response(
+                user_external_id,
+                source,
+                parsed_message,
+                message,
+                status="conflict",
+                clarification_question=message,
+                plan_diff=PlanDiffResponse(conflict=message),
+            )
+
+        today_result = next(result for result in plan_results if result.day_plan.date == plan_date)
+        plan_diff = _build_plan_diff(db, user, mutation, before, plan_results)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    affected = _unique_tasks(mutation.created + mutation.updated + mutation.completed + mutation.cancelled)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        "Изменения применены. Оставил главное и перенёс согласованные задачи на завтра.",
+        affected_tasks=affected,
+        day_plan=today_result.day_plan,
+        plan_diff=plan_diff,
+    )
+def _preferred_window_from_text(text: str, option_id: str | None = None) -> str | None:
+    if option_id in {"morning", "afternoon", "evening"}:
+        return option_id
+
+    lowered = text.lower().replace("ё", "е")
+
+    if re.search(r"\b(?:утром|утро|с утра)\b", lowered):
+        return "morning"
+
+    if re.search(r"\b(?:днем|после обеда)\b", lowered):
+        return "afternoon"
+
+    if re.search(r"\b(?:вечером|вечер)\b", lowered):
+        return "evening"
+
+    return None
+
+
+def _fixed_time_from_text(text: str) -> str | None:
+    match = re.search(r"\b(?:в|на)?\s*(\d{1,2})(?::(\d{2}))\b", text)
+
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+
+    if hour > 23 or minute > 59:
+        return None
+
+    return f"{hour:02d}:{minute:02d}"
+
+
+def _repeat_clarification(
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+    interaction,
+) -> MessageResponse:
+    clarification = _clarification_payload(interaction)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        clarification.question,
+        status="clarification_required",
+        clarification_question=clarification.question,
+        clarification=clarification,
+        plan_diff=PlanDiffResponse(clarification=clarification.question),
+    )
+
+
+def _handle_pending_interaction(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    text: str,
+    interaction,
+    option_id: str | None,
+) -> MessageResponse:
+    context = interaction.context or {}
+    parsed_message = ParsedUserMessage.model_validate(
+        context.get("parsed_message") or {"intent": "add_tasks", "raw_text": interaction.original_message}
+    )
+
+    if is_cancel_message(text) or option_id == "cancel":
+        resolve_interaction(db, interaction, status="cancelled")
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            "Хорошо, оставил план без изменений.",
+            status="no_change",
+        )
+
+    selected = interaction_option(interaction.options, option_id, text)
+    flow = context.get("flow")
+
+    if flow == "tracking_kind":
+        lowered = text.lower().replace("ё", "е")
+
+        if selected is None:
+            if re.search(r"\b(?:ежеднев|каждый день|регуляр|напоминай)\b", lowered):
+                selected = "routine"
+            elif re.search(r"\b(?:разов|один раз|на сегодня)\b", lowered):
+                selected = "one_time"
+            elif re.search(r"\b(?:трекер|счетчик|отдельн)\b", lowered):
+                selected = "capability"
+
+        if selected == "capability":
+            resolve_interaction(db, interaction)
+            return _base_response(
+                user_external_id,
+                source,
+                parsed_message,
+                "Отдельного трекера для этого пока нет. Могу добавить разовую задачу или ежедневное напоминание.",
+                status="unsupported_capability",
+            )
+
+        if selected == "one_time":
+            resolve_interaction(db, interaction, commit=False)
+            one_time = ParsedUserMessage(
+                intent="add_tasks",
+                date="today",
+                tasks=[task_for_one_time_tracking(context["one_time_title"])],
+                raw_text=interaction.original_message,
+            )
+            return _process_parsed_user_message(
+                db,
+                user,
+                user_external_id,
+                one_time,
+                source,
+            )
+
+        if selected == "routine":
+            preferred_window = _preferred_window_from_text(text)
+
+            if preferred_window:
+                return _create_routine_confirmation(
+                    db,
+                    user,
+                    user_external_id,
+                    source,
+                    parsed_message,
+                    title=context["routine_title"],
+                    preferred_window=preferred_window,
+                )
+
+            options = [
+                {"id": "morning", "label": "Утром", "value": "утром"},
+                {"id": "afternoon", "label": "Днём", "value": "днём"},
+                {"id": "evening", "label": "Вечером", "value": "вечером"},
+                {"id": "cancel", "label": "Отмена", "value": "отмена"},
+            ]
+            next_interaction = create_pending_interaction(
+                db,
+                user,
+                source=source,
+                kind="clarification",
+                original_message=interaction.original_message,
+                context={**context, "flow": "tracking_time"},
+                question="Когда лучше напоминать?",
+                options=options,
+            )
+            return _repeat_clarification(
+                user_external_id,
+                source,
+                parsed_message,
+                next_interaction,
+            )
+
+        return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+    if flow == "tracking_time":
+        preferred_window = _preferred_window_from_text(text, selected)
+
+        if not preferred_window:
+            return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+        return _create_routine_confirmation(
+            db,
+            user,
+            user_external_id,
+            source,
+            parsed_message,
+            title=context["routine_title"],
+            preferred_window=preferred_window,
+        )
+
+    if flow in {"fixed_conflict", "fixed_time"}:
+        fixed_start = _fixed_time_from_text(text)
+
+        if selected == "choose_time" and not fixed_start:
+            next_interaction = create_pending_interaction(
+                db,
+                user,
+                source=source,
+                kind="clarification",
+                original_message=interaction.original_message,
+                context={**context, "flow": "fixed_time"},
+                question="На какое время поставить новое событие?",
+                options=[{"id": "cancel", "label": "Отмена", "value": "отмена"}],
+            )
+            return _repeat_clarification(
+                user_external_id,
+                source,
+                parsed_message,
+                next_interaction,
+            )
+
+        if fixed_start and parsed_message.tasks:
+            resolve_interaction(db, interaction, commit=False)
+            parsed_message.tasks[0].fixed_start = fixed_start
+            parsed_message.tasks[0].fixed_end = None
+            parsed_message.tasks[0].scheduling_type = "fixed"
+            parsed_message.tasks[0].needs_clarification = False
+            return _process_parsed_user_message(
+                db,
+                user,
+                user_external_id,
+                parsed_message,
+                source,
+            )
+
+        return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+    if flow == "task_clarification":
+        if selected == "one_time" and parsed_message.tasks:
+            resolve_interaction(db, interaction, commit=False)
+            parsed_message.tasks[0].needs_clarification = False
+            parsed_message.tasks[0].recurrence_hint = None
+            parsed_message.tasks[0].scheduling_type = "flexible"
+            return _process_parsed_user_message(
+                db,
+                user,
+                user_external_id,
+                parsed_message,
+                source,
+            )
+
+        if selected == "routine" and parsed_message.tasks:
+            preferred_window = parsed_message.tasks[0].preferred_window or _preferred_window_from_text(text)
+
+            if preferred_window:
+                return _create_routine_confirmation(
+                    db,
+                    user,
+                    user_external_id,
+                    source,
+                    parsed_message,
+                    title=parsed_message.tasks[0].title,
+                    preferred_window=preferred_window,
+                )
+
+        return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+    if flow == "low_energy_replan":
+        if selected == "apply":
+            return _apply_low_energy_replan(
+                db,
+                user,
+                user_external_id,
+                source,
+                parsed_message,
+                interaction,
+            )
+
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            interaction.question or "Применить изменения?",
+            status="confirmation_required",
+            confirmation=_confirmation_payload(interaction),
+        )
+
+    if flow == "create_routine":
+        if selected == "edit":
+            next_interaction = create_pending_interaction(
+                db,
+                user,
+                source=source,
+                kind="clarification",
+                original_message=interaction.original_message,
+                context={**context, "flow": "tracking_time"},
+                question="Когда лучше напоминать?",
+                options=[
+                    {"id": "morning", "label": "Утром", "value": "утром"},
+                    {"id": "afternoon", "label": "Днём", "value": "днём"},
+                    {"id": "evening", "label": "Вечером", "value": "вечером"},
+                    {"id": "cancel", "label": "Отмена", "value": "отмена"},
+                ],
+            )
+            return _repeat_clarification(
+                user_external_id,
+                source,
+                parsed_message,
+                next_interaction,
+            )
+
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            "Подтверждение сохранено, но routine ещё не применена.",
+            status="confirmation_required",
+            confirmation=_confirmation_payload(interaction),
+        )
+
+    return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+
+def _persist_response_interaction(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+    response: MessageResponse,
+) -> MessageResponse:
+    if response.status == "clarification_required" and response.clarification is None:
+        is_recurrence = any(task.recurrence_hint for task in parsed_message.tasks)
+        options = (
+            [
+                {"id": "routine", "label": "Регулярное напоминание", "value": "регулярно"},
+                {"id": "one_time", "label": "Разовая задача", "value": "разовая задача"},
+                {"id": "cancel", "label": "Отмена", "value": "отмена"},
+            ]
+            if is_recurrence
+            else [{"id": "cancel", "label": "Отмена", "value": "отмена"}]
+        )
+        question = response.clarification_question or "Уточни, что нужно сделать."
+        interaction = create_pending_interaction(
+            db,
+            user,
+            source=source,
+            kind="clarification",
+            original_message=parsed_message.raw_text or "",
+            context={
+                "flow": "task_clarification",
+                "parsed_message": parsed_message.model_dump(mode="json"),
+            },
+            question=question,
+            options=options,
+        )
+        response.clarification = _clarification_payload(interaction)
+
+    if response.status == "conflict" and response.conflict_details is None:
+        message = response.plan_diff.conflict or response.reply_text
+        options = [
+            {"id": "choose_time", "label": "Выбрать другое время", "value": "другое время"},
+            {"id": "cancel", "label": "Отмена", "value": "отмена"},
+        ]
+        interaction = create_pending_interaction(
+            db,
+            user,
+            source=source,
+            kind="conflict",
+            original_message=parsed_message.raw_text or "",
+            context={
+                "flow": "fixed_conflict",
+                "parsed_message": parsed_message.model_dump(mode="json"),
+            },
+            question=message,
+            options=options,
+        )
+        response.conflict_details = _conflict_payload(interaction, message)
+
+    return response
+
+
+def _attach_day_snapshot(
+    db: Session,
+    user: User,
+    response: MessageResponse,
+    parsed_message: ParsedUserMessage,
+) -> None:
+    plan_date = response.plan_summary.date if response.plan_summary else get_plan_date(parsed_message, user=user)
+    day_plan = (
+        db.query(DayPlan)
+        .filter(DayPlan.user_id == user.id, DayPlan.date == plan_date)
+        .one_or_none()
+    )
+
+    if day_plan is None:
+        day_plan = rebuild_day_plan(db=db, user=user, plan_date=plan_date)
+
+    response.plan_summary = plan_to_response(day_plan)
+    response.day_snapshot = day_snapshot_to_response(db, user, day_plan)
+
+
+def _run_standard_message(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> tuple[User, MessageResponse]:
+    if parsed_message.intent in {
+        "update_profile",
+        "update_goals",
+        "suggest_goal_tasks",
+        "add_tasks",
+        "mark_done",
+        "daily_summary",
+        "clear_tasks",
+        "reschedule",
+    }:
+        user = (
+            db.query(User)
+            .filter(User.id == user.id)
+            .with_for_update()
+            .one()
+        )
+
+    response = _process_parsed_user_message(
+        db,
+        user,
+        user_external_id,
+        parsed_message,
+        source,
+    )
+    response = _persist_response_interaction(
+        db,
+        user,
+        user_external_id,
+        source,
+        parsed_message,
+        response,
+    )
+    return user, response
+
+
+def process_user_message(
+    db: Session,
+    user_external_id: str,
+    text: str,
+    source: MessageSource = "telegram_text",
+    user_name: str | None = None,
+    telegram_id: int | None = None,
+    request_id: str | None = None,
+    interaction_id: str | None = None,
+    option_id: str | None = None,
+) -> MessageResponse:
+    started_at = perf_counter()
+    normalized_request_id = (request_id or str(uuid4())).strip()[:128]
+    user = get_or_create_user_by_external_id(
+        db=db,
+        external_id=user_external_id,
+        name=user_name,
+        telegram_id=telegram_id,
+    )
+    reservation = reserve_message_request(
+        db,
+        user,
+        request_id=normalized_request_id,
+        source=source,
+    )
+
+    if reservation.cached_response:
+        return reservation.cached_response
+
+    if reservation.processing:
+        parsed_message = ParsedUserMessage(intent="show_plan")
+        response = _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            "Это изменение уже обрабатывается. Текст сохранён; повтор не создаст дубликат.",
+            status="no_change",
+        )
+        response.request_id = normalized_request_id
+        _attach_day_snapshot(db, user, response, parsed_message)
+        return response
+
+    receipt = reservation.receipt
+
+    if receipt is None:
+        raise RuntimeError("Could not reserve message request")
+
+    if receipt.status == "failed":
+        receipt.status = "processing"
+        db.commit()
+
+    parser_started_at = perf_counter()
+
+    try:
+        pending = get_pending_interaction(db, user, interaction_id)
+
+        if pending:
+            parsed_message = ParsedUserMessage.model_validate(
+                (pending.context or {}).get("parsed_message")
+                or {"intent": "add_tasks", "raw_text": pending.original_message}
+            )
+            parser_ms = 0.0
+            response = _handle_pending_interaction(
+                db,
+                user,
+                user_external_id,
+                source,
+                text,
+                pending,
+                option_id,
+            )
+        elif interaction_id:
+            parsed_message = ParsedUserMessage(intent="show_plan")
+            parser_ms = 0.0
+            response = _base_response(
+                user_external_id,
+                source,
+                parsed_message,
+                "Это уточнение уже закрыто или устарело. План не изменён.",
+                status="no_change",
+            )
+        else:
+            parsed_message = parse_user_message(text)
+            parser_ms = (perf_counter() - parser_started_at) * 1000
+            normalize_parsed_tasks(parsed_message, text)
+
+            if is_capability_request(text):
+                response = _base_response(
+                    user_external_id,
+                    source,
+                    parsed_message,
+                    "Такой отдельной функции пока нет. Могу помочь сформулировать разовую задачу или напоминание.",
+                    status="unsupported_capability",
+                )
+            else:
+                ambiguity = detect_tracking_ambiguity(text, parsed_message)
+
+                if ambiguity:
+                    response = _build_tracking_clarification(
+                        db,
+                        user,
+                        user_external_id,
+                        source,
+                        parsed_message,
+                        subject=ambiguity.subject,
+                        one_time_title=ambiguity.one_time_title,
+                        routine_title=ambiguity.routine_title,
+                    )
+                else:
+                    response = (
+                        _build_low_energy_confirmation(
+                            db,
+                            user,
+                            user_external_id,
+                            source,
+                            parsed_message,
+                        )
+                        if is_low_energy_replan_request(text, parsed_message)
+                        else None
+                    )
+
+                    if response is None:
+                        user, response = _run_standard_message(
+                            db,
+                            user,
+                            user_external_id,
+                            source,
+                            parsed_message,
+                        )
+
+        response.request_id = normalized_request_id
+        _attach_day_snapshot(db, user, response, parsed_message)
+        complete_message_request(db, receipt, response)
+    except Exception:
+        db.rollback()
+        fail_message_request(db, receipt)
+        raise
+
+    total_ms = (perf_counter() - started_at) * 1000
+    logger.info(
+        "message processed request_id=%s source=%s provider=%s status=%s "
+        "request_total_ms=%.1f parser_total_ms=%.1f",
+        normalized_request_id,
+        source,
+        parsed_message.parser_provider,
+        response.status,
+        total_ms,
+        parser_ms,
+    )
+    return response

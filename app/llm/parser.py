@@ -1226,6 +1226,11 @@ def _llm_messages(text: str) -> list[dict[str, str]]:
     ]
 
 
+def _effective_llm_timeout() -> float:
+    request_budget = max(settings.message_request_timeout_seconds - 2.0, 1.0)
+    return max(min(settings.llm_timeout_seconds, request_budget), 1.0)
+
+
 def _parse_with_openai_compatible(text: str) -> ParsedUserMessage:
     if not settings.llm_api_key:
         raise RuntimeError("LLM API key is not configured")
@@ -1233,7 +1238,8 @@ def _parse_with_openai_compatible(text: str) -> ParsedUserMessage:
     client = OpenAI(
         api_key=settings.llm_api_key,
         base_url=settings.llm_base_url or None,
-        timeout=settings.llm_timeout_seconds,
+        timeout=_effective_llm_timeout(),
+        max_retries=0,
     )
 
     model = settings.llm_model or DEFAULT_LLM_MODEL
@@ -1266,7 +1272,10 @@ def _parse_with_ollama(text: str) -> ParsedUserMessage:
         },
     }
 
-    with httpx.Client(timeout=settings.llm_timeout_seconds) as client:
+    timeout_seconds = _effective_llm_timeout()
+    timeout = httpx.Timeout(timeout_seconds, connect=min(3.0, timeout_seconds))
+
+    with httpx.Client(timeout=timeout) as client:
         response = client.post(url, json=payload)
         response.raise_for_status()
         data = response.json()

@@ -83,7 +83,7 @@ def test_post_message_adds_task(client: TestClient):
     assert payload["user_external_id"] == "web-user-1"
     assert payload["source"] == "web_text"
     assert payload["intent"] == "add_tasks"
-    assert payload["affected_tasks"][0]["title"] == "разобрать документы"
+    assert payload["affected_tasks"][0]["title"] == "Разобрать документы"
     assert payload["status"] == "applied"
     assert payload["plan_diff"]["created_task_ids"] == [payload["affected_tasks"][0]["id"]]
     assert payload["plan_summary"]["date"] == payload["affected_tasks"][0]["target_date"]
@@ -116,7 +116,7 @@ def test_fixed_conflict_returns_clarification_without_partial_api_mutation(clien
     assert payload["status"] == "conflict"
     assert payload["needs_clarification"] is True
     assert payload["plan_diff"]["conflict"]
-    assert [task["title"] for task in tasks] == ["теннис"]
+    assert [task["title"] for task in tasks] == ["Теннис"]
 
 
 def test_tasks_are_isolated_by_user(client: TestClient):
@@ -140,8 +140,8 @@ def test_tasks_are_isolated_by_user(client: TestClient):
     user_a_tasks = client.get("/api/tasks/user-a").json()
     user_b_tasks = client.get("/api/tasks/user-b").json()
 
-    assert [task["title"] for task in user_a_tasks] == ["оплатить счета"]
-    assert [task["title"] for task in user_b_tasks] == ["купить продукты"]
+    assert [task["title"] for task in user_a_tasks] == ["Оплатить счета"]
+    assert [task["title"] for task in user_b_tasks] == ["Купить продукты"]
 
 
 def test_owner_can_set_planned_task_done_and_keep_day_history(client: TestClient):
@@ -295,8 +295,8 @@ def test_get_plan_today_returns_plan_for_user_tasks(client: TestClient):
     payload = response.json()
 
     assert payload["status"] in {"draft", "overloaded"}
-    assert any(item["title"] == "подготовиться к экзамену" for item in payload["items"])
-    assert payload["focus_text"].startswith("Сначала — подготовиться к экзамену")
+    assert any(item["title"] == "Подготовиться к экзамену" for item in payload["items"])
+    assert payload["focus_text"].startswith("Сначала — Подготовиться к экзамену")
     assert len(payload["focus_text"]) <= FOCUS_TEXT_MAX_LENGTH
 
 
@@ -392,3 +392,238 @@ def test_message_accepts_voice_transcript_source_without_real_llm(client: TestCl
     assert payload["source"] == "telegram_voice_transcript"
     assert payload["intent"] == "add_tasks"
     assert payload["parsed"]["date"] == "tomorrow"
+
+
+def test_message_returns_atomic_day_snapshot(client: TestClient):
+    response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "snapshot-user",
+            "source": "web_text",
+            "request_id": "snapshot-request-1",
+            "text": "Сегодня добавь задачу оплатить интернет",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    snapshot = payload["day_snapshot"]
+
+    assert payload["request_id"] == "snapshot-request-1"
+    assert snapshot["plan"] == payload["plan_summary"]
+    assert snapshot["tasks"] == payload["affected_tasks"]
+    assert snapshot["progress"] == {"done": 0, "total": 1}
+    assert snapshot["scheduled_items"][0]["task_id"] == snapshot["tasks"][0]["id"]
+
+
+def test_ambiguous_tracking_request_uses_persistent_clarification(client: TestClient):
+    first = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "tracking-user",
+            "source": "web_text",
+            "request_id": "tracking-request-1",
+            "text": "добавь бжу чтобы я считал",
+        },
+    )
+
+    assert first.status_code == 200
+    first_payload = first.json()
+    clarification = first_payload["clarification"]
+
+    assert first_payload["status"] == "clarification_required"
+    assert first_payload["day_snapshot"]["tasks"] == []
+    assert {option["id"] for option in clarification["options"]} == {
+        "routine",
+        "one_time",
+        "capability",
+    }
+
+    second = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "tracking-user",
+            "source": "web_text",
+            "request_id": "tracking-request-2",
+            "interaction_id": clarification["id"],
+            "option_id": "one_time",
+            "text": "разовая задача",
+        },
+    )
+    payload = second.json()
+
+    assert payload["status"] == "applied"
+    assert [task["title"] for task in payload["day_snapshot"]["tasks"]] == ["Записать БЖУ"]
+    item = payload["day_snapshot"]["unscheduled_items"][0]
+    assert item["start_time"] is None
+    assert item["unscheduled_reason"] == "missing_duration"
+
+
+def test_capability_request_does_not_create_task(client: TestClient):
+    response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "capability-user",
+            "source": "web_text",
+            "request_id": "capability-request-1",
+            "text": "Сделай отдельный трекер питания",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unsupported_capability"
+    assert payload["day_snapshot"]["tasks"] == []
+
+
+def test_clarification_is_user_scoped(client: TestClient):
+    first = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "clarification-owner",
+            "request_id": "owner-request-1",
+            "text": "добавь бжу чтобы я считал",
+        },
+    ).json()
+
+    response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "clarification-other-user",
+            "request_id": "other-request-1",
+            "interaction_id": first["clarification"]["id"],
+            "option_id": "one_time",
+            "text": "разовая задача",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_change"
+    assert client.get("/api/tasks/clarification-other-user").json() == []
+
+
+def test_message_request_id_is_idempotent(client: TestClient):
+    body = {
+        "user_external_id": "idempotent-user",
+        "source": "web_text",
+        "request_id": "same-request-id",
+        "text": "Сегодня хочу позвонить врачу",
+    }
+
+    first = client.post("/api/message", json=body)
+    second = client.post("/api/message", json=body)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+    assert len(client.get("/api/tasks/idempotent-user?date=today").json()) == 1
+
+
+def test_conflict_context_accepts_a_different_fixed_time(client: TestClient):
+    client.post(
+        "/api/message",
+        json={
+            "user_external_id": "conflict-context-user",
+            "request_id": "conflict-context-1",
+            "text": "Завтра в 19:00 теннис на час",
+        },
+    )
+    conflict = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "conflict-context-user",
+            "request_id": "conflict-context-2",
+            "text": "Завтра в 19:00 созвон на час",
+        },
+    ).json()
+
+    assert conflict["status"] == "conflict"
+    assert {option["id"] for option in conflict["conflict_details"]["options"]} == {
+        "choose_time",
+        "cancel",
+    }
+
+    resolved = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "conflict-context-user",
+            "request_id": "conflict-context-3",
+            "interaction_id": conflict["conflict_details"]["id"],
+            "text": "Поставь в 20:00",
+        },
+    ).json()
+
+    assert resolved["status"] == "applied"
+    starts = [item["start_time"] for item in resolved["day_snapshot"]["scheduled_items"]]
+    assert starts == ["19:00:00", "20:00:00"]
+
+
+def test_repeated_day_snapshot_read_keeps_plan_version(client: TestClient):
+    client.post(
+        "/api/message",
+        json={
+            "user_external_id": "plan-version-user",
+            "request_id": "plan-version-request",
+            "text": "Сегодня хочу разобрать почту",
+        },
+    )
+
+    first = client.get("/api/day/plan-version-user?date=today").json()
+    second = client.get("/api/day/plan-version-user?date=today").json()
+
+    assert first["plan_version"] == second["plan_version"]
+
+
+def test_low_energy_replan_requires_confirmation_before_moving_tasks(client: TestClient):
+    user_id = "low-energy-user"
+
+    for index, text in enumerate(
+        [
+            "Сегодня хочу поделать проект",
+            "Сегодня хочу разобрать почту",
+            "Сегодня хочу купить продукты",
+        ],
+        start=1,
+    ):
+        response = client.post(
+            "/api/message",
+            json={
+                "user_external_id": user_id,
+                "request_id": f"low-energy-setup-{index}",
+                "text": text,
+            },
+        )
+        assert response.status_code == 200
+
+    proposal = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_id,
+            "request_id": "low-energy-proposal",
+            "text": "Сегодня мало сил, добавь ещё 40 минут на проект и оставь только главное.",
+        },
+    ).json()
+
+    assert proposal["status"] == "confirmation_required"
+    assert proposal["confirmation"]
+    assert len(proposal["day_snapshot"]["tasks"]) == 3
+    project_before = next(task for task in proposal["day_snapshot"]["tasks"] if "проект" in task["title"].lower())
+    assert project_before["estimated_minutes"] == 60
+
+    applied = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_id,
+            "request_id": "low-energy-apply",
+            "interaction_id": proposal["confirmation"]["id"],
+            "option_id": "apply",
+            "text": "применить",
+        },
+    ).json()
+
+    assert applied["status"] == "applied"
+    assert applied["day_snapshot"]["day_context"]["energy_level"] == "low"
+    assert [task["title"] for task in applied["day_snapshot"]["tasks"]] == ["Поделать проект"]
+    assert applied["day_snapshot"]["tasks"][0]["estimated_minutes"] == 100
+    tomorrow = client.get(f"/api/tasks/{user_id}?date=tomorrow").json()
+    assert {task["title"] for task in tomorrow} == {"Разобрать почту", "Купить продукты"}

@@ -1,13 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import {
   checkHealth,
-  getGoals,
-  getTodayPlan,
-  getTodayTasks,
+  getTodayData,
   processMessage,
   setTaskStatus
 } from "./api";
+import { composerReducer, initialComposerState } from "./composerState";
 import DayComposer from "./components/DayComposer";
 import DayFocus from "./components/DayFocus";
 import DayProgress from "./components/DayProgress";
@@ -16,6 +15,8 @@ import TodayHeader from "./components/TodayHeader";
 import TodayPlan from "./components/TodayPlan";
 import type {
   Goal,
+  DaySnapshot,
+  InteractionOption,
   LoadState,
   MessageResponse,
   Plan,
@@ -29,11 +30,11 @@ import type {
 
 const USER_ID_STORAGE_KEY = "ai-life-planner-user-id";
 
-type TodaySnapshot = {
+type DayViewState = {
   plan: Plan | null;
-  tasks: Task[] | null;
-  goals: Goal[] | null;
-  failed: number;
+  tasks: Task[];
+  goals: Goal[];
+  taskPlacements: Map<number, TaskPlacement>;
 };
 
 function localDateValue(value = new Date()): string {
@@ -184,8 +185,19 @@ function buildPlanUpdate(
   const limitedChanges = changes.slice(0, 5);
   const goalOnly = response.affected_goals.length > 0 && limitedChanges.length === 0;
 
+  const titles: Record<string, string> = {
+    applied: response.plan_summary ? "План обновлён" : "Изменения сохранены",
+    clarification_required: "Нужно уточнение",
+    needs_clarification: "Нужно уточнение",
+    confirmation_required: "Нужно подтверждение",
+    conflict: "Конфликт в плане",
+    no_change: "План не изменён",
+    unsupported_capability: "Функция пока недоступна",
+    failed: "Не получилось обновить план"
+  };
+
   return {
-    title: response.status === "applied" ? response.plan_summary ? "План обновлён" : "Изменения сохранены" : "Нужно уточнение",
+    title: titles[response.status] || "План обновлён",
     message: response.clarification_question || (goalOnly
       ? "Цели обновлены. Они будут учитываться в следующих планах."
       : limitedChanges.length === 0
@@ -200,25 +212,27 @@ export default function App() {
   const [userId, setUserId] = useState(initialUserId);
   const [userIdDraft, setUserIdDraft] = useState(initialUserId);
   const [currentDate, setCurrentDate] = useState(() => new Date());
-  const [draft, setDraft] = useState("");
-  const [composerOpen, setComposerOpen] = useState(false);
+  const [composer, dispatchComposer] = useReducer(composerReducer, initialComposerState);
   const [backendStatus, setBackendStatus] = useState<LoadState>("idle");
   const [planStatus, setPlanStatus] = useState<LoadState>("idle");
   const [tasksStatus, setTasksStatus] = useState<LoadState>("idle");
   const [goalsStatus, setGoalsStatus] = useState<LoadState>("idle");
-  const [submitStatus, setSubmitStatus] = useState<LoadState>("idle");
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [pendingTaskIds, setPendingTaskIds] = useState<Set<number>>(new Set());
   const [taskErrors, setTaskErrors] = useState<Map<number, TaskStatusError>>(new Map());
   const [changedTaskIds, setChangedTaskIds] = useState<Set<number>>(new Set());
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [goals, setGoals] = useState<Goal[]>([]);
-  const [taskPlacements, setTaskPlacements] = useState<Map<number, TaskPlacement>>(new Map());
+  const [day, setDay] = useState<DayViewState>({
+    plan: null,
+    tasks: [],
+    goals: [],
+    taskPlacements: new Map()
+  });
   const [lastUpdate, setLastUpdate] = useState<PlanUpdate | null>(null);
   const activeLoadKey = useRef<string | null>(null);
+  const activeSubmitRequest = useRef<string | null>(null);
+  const submitAbortController = useRef<AbortController | null>(null);
   const highlightTimer = useRef<number | null>(null);
+  const { plan, tasks, goals, taskPlacements } = day;
 
   const todayValue = localDateValue(currentDate);
   const todayText = formatToday(currentDate);
@@ -259,10 +273,22 @@ export default function App() {
           ? "План пока пуст. Добавь дела одним сообщением — я распределю их по дню."
           : "Собираю актуальный фокус дня.");
 
+  function applySnapshot(snapshot: DaySnapshot, resetPlacements = true): void {
+    setDay((current) => ({
+      plan: snapshot.plan,
+      tasks: snapshot.tasks,
+      goals: snapshot.goals,
+      taskPlacements: mergePlacements(current.taskPlacements, snapshot.plan, resetPlacements)
+    }));
+    setPlanStatus("ready");
+    setTasksStatus("ready");
+    setGoalsStatus("ready");
+  }
+
   async function refreshData(
     nextUserId = userId,
-    options: { initial?: boolean; resetPlacements?: boolean; preservePlacements?: boolean } = {}
-  ): Promise<TodaySnapshot> {
+    options: { initial?: boolean; resetPlacements?: boolean } = {}
+  ): Promise<DaySnapshot | null> {
     const loadKey = `${nextUserId}:${todayValue}`;
     activeLoadKey.current = loadKey;
 
@@ -272,59 +298,24 @@ export default function App() {
       setGoalsStatus("loading");
     }
 
-    let failed = 0;
-    let nextPlan: Plan | null = null;
-    let nextTasks: Task[] | null = null;
-    let nextGoals: Goal[] | null = null;
-
     try {
-      nextPlan = await getTodayPlan(nextUserId);
+      const snapshot = await getTodayData(nextUserId);
 
       if (activeLoadKey.current !== loadKey) {
-        return { plan: null, tasks: null, goals: null, failed: 3 };
+        return null;
       }
 
-      setPlan(nextPlan);
-      if (!options.preservePlacements) {
-        setTaskPlacements((current) =>
-          mergePlacements(current, nextPlan as Plan, Boolean(options.resetPlacements))
-        );
-      }
-      setPlanStatus("ready");
+      applySnapshot(
+        snapshot,
+        options.resetPlacements !== false
+      );
+      return snapshot;
     } catch {
-      failed += 1;
       setPlanStatus("error");
-    }
-
-    try {
-      nextTasks = await getTodayTasks(nextUserId);
-
-      if (activeLoadKey.current !== loadKey) {
-        return { plan: null, tasks: null, goals: null, failed: 3 };
-      }
-
-      setTasks(nextTasks);
-      setTasksStatus("ready");
-    } catch {
-      failed += 1;
       setTasksStatus("error");
-    }
-
-    try {
-      nextGoals = await getGoals(nextUserId);
-
-      if (activeLoadKey.current !== loadKey) {
-        return { plan: null, tasks: null, goals: null, failed: 3 };
-      }
-
-      setGoals(nextGoals);
-      setGoalsStatus("ready");
-    } catch {
-      failed += 1;
       setGoalsStatus("error");
+      return null;
     }
-
-    return { plan: nextPlan, tasks: nextTasks, goals: nextGoals, failed };
   }
 
   useEffect(() => {
@@ -353,22 +344,24 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem(USER_ID_STORAGE_KEY, userId);
-    setPlan(null);
-    setTasks([]);
-    setGoals([]);
-    setTaskPlacements(new Map());
+    submitAbortController.current?.abort();
+    submitAbortController.current = null;
+    activeSubmitRequest.current = null;
+    dispatchComposer({ type: "reset" });
+    setDay({ plan: null, tasks: [], goals: [], taskPlacements: new Map() });
     setTaskErrors(new Map());
     setLastUpdate(null);
     setRefreshNotice(null);
 
     void refreshData(userId, { initial: true, resetPlacements: true }).then((snapshot) => {
-      if (snapshot.failed >= 2) {
+      if (!snapshot) {
         setRefreshNotice("Не удалось загрузить день. Проверь подключение и попробуй ещё раз.");
       }
     });
   }, [todayValue, userId]);
 
   useEffect(() => () => {
+    submitAbortController.current?.abort();
     if (highlightTimer.current) {
       window.clearTimeout(highlightTimer.current);
     }
@@ -380,53 +373,87 @@ export default function App() {
     setUserId(normalizedUserId);
   }
 
-  async function handleSubmit(): Promise<void> {
-    const text = draft.trim();
+  async function handleSubmit(
+    interactionId: string | null = null,
+    option: InteractionOption | null = null
+  ): Promise<void> {
+    const text = (option?.value || composer.draft).trim();
 
-    if (!text || submitStatus === "loading") {
+    if (!text || composer.phase === "submitting") {
       return;
     }
 
     const previousTasks = tasks.map((task) => ({ ...task }));
-    setSubmitStatus("loading");
-    setSubmitError(null);
-    setComposerOpen(false);
+    const requestId = option || interactionId
+      ? crypto.randomUUID()
+      : composer.retryRequestId || crypto.randomUUID();
+    const controller = new AbortController();
+    submitAbortController.current?.abort();
+    submitAbortController.current = controller;
+    activeSubmitRequest.current = requestId;
+    dispatchComposer({ type: "submit", requestId });
     setRefreshNotice(null);
-
-    let response: MessageResponse;
-
-    try {
-      response = await processMessage(userId, text);
-    } catch {
-      setSubmitStatus("error");
-      setSubmitError("Не получилось обновить план");
-      setComposerOpen(true);
-      return;
-    }
-
-    if (response.plan_summary) {
-      setPlan(response.plan_summary);
-      setTaskPlacements((current) => mergePlacements(current, response.plan_summary as Plan, false));
-    }
-
-    const snapshot = await refreshData(userId);
-    const nextTasks = snapshot.tasks || tasks;
-    const nextPlan = snapshot.plan || response.plan_summary || plan;
-    const update = buildPlanUpdate(
-      response,
-      previousTasks,
-      nextTasks,
-      nextPlan
+    const slowTimer = window.setTimeout(
+      () => dispatchComposer({ type: "slow", requestId }),
+      5_000
     );
 
-    setLastUpdate(update);
-    setChangedTaskIds(new Set(response.affected_tasks.map((task) => task.id)));
-    setDraft("");
-    setComposerOpen(response.needs_clarification);
-    setSubmitStatus("ready");
+    try {
+      const response = await processMessage(
+        userId,
+        {
+          text,
+          requestId,
+          interactionId,
+          optionId: option?.id || null
+        },
+        controller.signal
+      );
 
-    if (snapshot.failed > 0) {
-      setRefreshNotice("Изменения сохранены, но часть дня не обновилась. Можно повторить загрузку.");
+      if (activeSubmitRequest.current !== requestId || response.request_id !== requestId) {
+        return;
+      }
+
+      if (!response.day_snapshot) {
+        throw new Error("Message response did not include a day snapshot");
+      }
+
+      const snapshot = response.day_snapshot;
+      applySnapshot(snapshot, true);
+      const update = buildPlanUpdate(
+        response,
+        previousTasks,
+        snapshot.tasks,
+        snapshot.plan
+      );
+
+      setLastUpdate(update);
+      setChangedTaskIds(new Set(response.affected_tasks.map((task) => task.id)));
+      dispatchComposer({
+        type: "response",
+        requestId,
+        status: response.status,
+        clarification: response.clarification,
+        confirmation: response.confirmation,
+        conflict: response.conflict_details
+      });
+    } catch {
+      if (activeSubmitRequest.current === requestId) {
+        dispatchComposer({
+          type: "error",
+          requestId,
+          message: "Не получилось обновить план"
+        });
+      }
+      return;
+    } finally {
+      window.clearTimeout(slowTimer);
+      if (activeSubmitRequest.current === requestId) {
+        activeSubmitRequest.current = null;
+      }
+      if (submitAbortController.current === controller) {
+        submitAbortController.current = null;
+      }
     }
 
     if (highlightTimer.current) {
@@ -449,19 +476,26 @@ export default function App() {
       next.delete(task.id);
       return next;
     });
-    setTasks((current) =>
-      current.map((item) => item.id === task.id ? { ...item, status: nextStatus } : item)
-    );
+    setDay((current) => ({
+      ...current,
+      tasks: current.tasks.map((item) =>
+        item.id === task.id ? { ...item, status: nextStatus } : item
+      )
+    }));
 
     try {
       const savedTask = await setTaskStatus(userId, task.id, nextStatus);
-      setTasks((current) =>
-        current.map((item) => item.id === task.id ? savedTask : item)
-      );
+      setDay((current) => ({
+        ...current,
+        tasks: current.tasks.map((item) => item.id === task.id ? savedTask : item)
+      }));
     } catch {
-      setTasks((current) =>
-        current.map((item) => item.id === task.id ? { ...item, status: previousStatus } : item)
-      );
+      setDay((current) => ({
+        ...current,
+        tasks: current.tasks.map((item) =>
+          item.id === task.id ? { ...item, status: previousStatus } : item
+        )
+      }));
       setTaskErrors((current) => new Map(current).set(task.id, { retryStatus: nextStatus }));
       setPendingTaskIds((current) => {
         const next = new Set(current);
@@ -471,9 +505,9 @@ export default function App() {
       return;
     }
 
-    const snapshot = await refreshData(userId, { preservePlacements: true });
+    const snapshot = await refreshData(userId, { resetPlacements: true });
 
-    if (snapshot.failed > 0) {
+    if (!snapshot) {
       setRefreshNotice("Статус сохранён, но часть дня не обновилась.");
     }
 
@@ -517,7 +551,7 @@ export default function App() {
               onClick={() => {
                 setRefreshNotice(null);
                 void refreshData(userId, { initial: true }).then((snapshot) => {
-                  if (snapshot.failed >= 2) {
+                    if (!snapshot) {
                     setRefreshNotice("Не удалось загрузить день. Проверь подключение и попробуй ещё раз.");
                   }
                 });
@@ -558,14 +592,19 @@ export default function App() {
       </main>
 
       <DayComposer
-        open={composerOpen}
-        draft={draft}
-        status={submitStatus}
-        error={submitError}
+        open={composer.open}
+        draft={composer.draft}
+        phase={composer.phase}
+        slow={composer.slow}
+        error={composer.error}
+        clarification={composer.clarification}
+        confirmation={composer.confirmation}
+        conflict={composer.conflict}
         disabled={criticalLoading}
-        onOpenChange={setComposerOpen}
-        onDraftChange={setDraft}
+        onOpenChange={(open) => dispatchComposer({ type: open ? "open" : "close" })}
+        onDraftChange={(value) => dispatchComposer({ type: "edit", value })}
         onSubmit={handleSubmit}
+        onOption={(interactionId, option) => handleSubmit(interactionId, option)}
       />
     </div>
   );
