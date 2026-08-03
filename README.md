@@ -45,6 +45,10 @@ Implemented:
 - minimal-disruption rebuilds that preserve valid existing slots;
 - honest unscheduled reasons and clarification for unresolved conflicts;
 - factual plan diff returned by the shared message pipeline;
+- atomic `DaySnapshot` returned by message processing, without a post-submit GET waterfall;
+- persistent clarification, confirmation, and fixed-conflict interactions shared by Web and Telegram;
+- request idempotency and plan version checks for safe retries and stale proposals;
+- limited routines with `daily`, `weekdays`, and `selected_weekdays` cadence and lazy idempotent occurrences;
 - completed tasks retained in their original timeline position as day history;
 - mark done flow;
 - daily summary flow;
@@ -57,7 +61,8 @@ Not ready yet:
 - full multi-screen Web UI;
 - production authentication;
 - production deployment;
-- full production Web API surface for all future Web UI workflows.
+- full production Web API surface for all future Web UI workflows;
+- advanced recurrence editing, exceptions, and calendar synchronization.
 
 FastAPI currently provides `/health` and a minimal `/api` foundation used by the Today Web UI. The primary MVP interface is still Telegram, and both Telegram and API flows converge on the same parser, service, and planner layers.
 
@@ -125,13 +130,17 @@ TELEGRAM_BOT_TOKEN=
 
 PLAN_START_BUFFER_MINUTES=30
 DEFAULT_PLAN_START_TIME=18:30
+MESSAGE_REQUEST_TIMEOUT_SECONDS=15
+MESSAGE_SLOW_NOTICE_SECONDS=5
+INTERACTION_TTL_MINUTES=30
+IDEMPOTENCY_TTL_HOURS=24
 
 LLM_ENABLED=false
 LLM_PROVIDER=mock
 LLM_BASE_URL=
 LLM_API_KEY=
 LLM_MODEL=
-LLM_TIMEOUT_SECONDS=30
+LLM_TIMEOUT_SECONDS=12
 LLM_MAX_INPUT_CHARS=1500
 LLM_MAX_OUTPUT_TOKENS=250
 LLM_OLLAMA_THINK=false
@@ -158,7 +167,7 @@ LLM_ENABLED=true
 LLM_PROVIDER=openai
 LLM_API_KEY=<your-local-key>
 LLM_MODEL=gpt-4o-mini
-LLM_TIMEOUT_SECONDS=30
+LLM_TIMEOUT_SECONDS=12
 LLM_MAX_INPUT_CHARS=1500
 LLM_MAX_OUTPUT_TOKENS=250
 ```
@@ -171,7 +180,7 @@ LLM_PROVIDER=openai-compatible
 LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
 LLM_API_KEY=<your-local-key>
 LLM_MODEL=<model-name>
-LLM_TIMEOUT_SECONDS=30
+LLM_TIMEOUT_SECONDS=12
 LLM_MAX_INPUT_CHARS=1500
 LLM_MAX_OUTPUT_TOKENS=250
 ```
@@ -186,7 +195,7 @@ LLM_PROVIDER=ollama
 LLM_BASE_URL=http://localhost:11434
 LLM_MODEL=<local-model-name>
 LLM_API_KEY=ollama
-LLM_TIMEOUT_SECONDS=30
+LLM_TIMEOUT_SECONDS=12
 LLM_MAX_INPUT_CHARS=1500
 LLM_MAX_OUTPUT_TOKENS=250
 LLM_OLLAMA_THINK=false
@@ -317,7 +326,7 @@ curl -X POST http://127.0.0.1:8000/api/message \
   }'
 ```
 
-`MessageResponse` includes `status` (`applied`, `needs_clarification`, or `conflict`), a human `clarification_question` when needed, and a backend-calculated `plan_diff`. The diff lists created, updated, completed, cancelled, moved, and unscheduled task IDs. A fixed-time conflict does not partially mutate the plan.
+`MessageResponse` uses explicit states: `applied`, `clarification_required`, `confirmation_required`, `conflict`, `no_change`, `unsupported_capability`, and `failed`. It includes a backend-calculated `plan_diff` and a consistent `day_snapshot` with plan, tasks, goals, routines, progress, day context, and plan version. Clarifications and confirmations carry a user-scoped interaction ID and expiry. Fixed-time conflicts and unconfirmed routines do not partially mutate the plan.
 
 Read endpoints:
 
@@ -325,6 +334,7 @@ Read endpoints:
 GET /api/profile/{user_external_id}
 GET /api/goals/{user_external_id}
 GET /api/tasks/{user_external_id}
+GET /api/day/{user_external_id}?date=today
 GET /api/plan/{user_external_id}?date=today
 GET /api/plan/{user_external_id}?date=tomorrow
 PATCH /api/tasks/{task_id}/status
@@ -352,7 +362,7 @@ http://127.0.0.1:5173
 
 ### 7. Run The Today Web UI
 
-The first Web UI is a minimal Today screen. It lets you type free text, sends it to `POST /api/message` with `source=web_text`, and refreshes today's plan, tasks, goals, and progress from the existing API endpoints. Today task checkboxes can switch between `planned` and `done` through the status endpoint. Scheduled times, unscheduled reasons, conflict messages, and plan changes come from backend services rather than frontend guesses.
+The first Web UI is a minimal Today screen. It sends free text to `POST /api/message` with a unique `request_id` and applies the returned `day_snapshot` atomically. It does not issue a plan/tasks/goals GET waterfall after submit. The composer supports persistent clarification, confirmation, conflict, timeout, retry, and draft preservation states. Today task checkboxes can switch between `planned` and `done` through the status endpoint. Scheduled times, unscheduled reasons, conflict messages, and plan changes come from backend services rather than frontend guesses.
 
 Start the backend first:
 
