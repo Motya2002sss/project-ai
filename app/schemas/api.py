@@ -64,6 +64,7 @@ class PlanResponse(BaseModel):
     id: int
     date: date
     summary: str | None
+    focus_text: str = Field(min_length=1, max_length=180)
     energy_level: str | None
     budget_limit: int | None
     status: str

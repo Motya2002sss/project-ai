@@ -22,14 +22,26 @@ export function checkHealth(): Promise<{ status: string }> {
   return requestJson<{ status: string }>("/health");
 }
 
-export async function getTodayData(userExternalId: string): Promise<TodayData> {
+export function getTodayPlan(userExternalId: string): Promise<Plan> {
   const encodedUserId = encodeURIComponent(userExternalId);
+  return requestJson<Plan>(`/api/plan/${encodedUserId}?date=today`);
+}
 
-  // The plan request establishes the temporary MVP user before parallel reads.
-  const plan = await requestJson<Plan>(`/api/plan/${encodedUserId}?date=today`);
+export function getTodayTasks(userExternalId: string): Promise<Task[]> {
+  const encodedUserId = encodeURIComponent(userExternalId);
+  return requestJson<Task[]>(`/api/tasks/${encodedUserId}?date=today`);
+}
+
+export function getGoals(userExternalId: string): Promise<Goal[]> {
+  const encodedUserId = encodeURIComponent(userExternalId);
+  return requestJson<Goal[]>(`/api/goals/${encodedUserId}`);
+}
+
+export async function getTodayData(userExternalId: string): Promise<TodayData> {
+  const plan = await getTodayPlan(userExternalId);
   const [tasks, goals] = await Promise.all([
-    requestJson<Task[]>(`/api/tasks/${encodedUserId}`),
-    requestJson<Goal[]>(`/api/goals/${encodedUserId}`)
+    getTodayTasks(userExternalId),
+    getGoals(userExternalId)
   ]);
 
   return { plan, tasks, goals };

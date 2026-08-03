@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,9 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.day_plan import DayPlan
+from app.models.plan_item import PlanItem
+from app.services.planning_service import FOCUS_TEXT_MAX_LENGTH, build_plan_focus
 
 
 @pytest.fixture()
@@ -260,6 +264,61 @@ def test_get_plan_today_returns_plan_for_user_tasks(client: TestClient):
 
     assert payload["status"] in {"draft", "overloaded"}
     assert any(item["title"] == "подготовиться к экзамену" for item in payload["items"])
+    assert payload["focus_text"].startswith("Сначала — подготовиться к экзамену")
+    assert len(payload["focus_text"]) <= FOCUS_TEXT_MAX_LENGTH
+
+
+def test_plan_focus_uses_plan_items_instead_of_raw_summary():
+    day_plan = DayPlan(
+        user_id=1,
+        date=date.today(),
+        summary="raw parser output with internal instructions",
+        status="draft",
+    )
+    day_plan.items = [
+        PlanItem(
+            task_id=1,
+            title="позвонить врачу",
+            item_type="task",
+            status="planned",
+        ),
+        PlanItem(
+            task_id=2,
+            title="подготовить документы " * 30,
+            item_type="task",
+            status="planned",
+        ),
+    ]
+
+    focus_text = build_plan_focus(day_plan)
+
+    assert focus_text.startswith("Сначала — позвонить врачу")
+    assert "raw parser output" not in focus_text
+    assert len(focus_text) <= FOCUS_TEXT_MAX_LENGTH
+
+
+def test_tasks_can_be_filtered_to_today_without_hiding_legacy_list(client: TestClient):
+    today_task = add_task(
+        client,
+        user_external_id="dated-task-user",
+        text="Сегодня хочу оплатить интернет",
+    )
+    tomorrow_response = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "dated-task-user",
+            "source": "web_text",
+            "text": "Завтра хочу забрать документы",
+        },
+    )
+    assert tomorrow_response.status_code == 200
+    tomorrow_task = tomorrow_response.json()["affected_tasks"][0]
+
+    today_tasks = client.get("/api/tasks/dated-task-user?date=today").json()
+    all_tasks = client.get("/api/tasks/dated-task-user").json()
+
+    assert [task["id"] for task in today_tasks] == [today_task["id"]]
+    assert {task["id"] for task in all_tasks} == {today_task["id"], tomorrow_task["id"]}
 
 
 def test_profile_endpoint_returns_isolated_profile(client: TestClient):

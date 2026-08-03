@@ -1,114 +1,135 @@
 import TaskRow from "./TaskRow";
-import type { LoadState, Plan, PlanItem, Task, TaskStatus } from "../types";
+import type {
+  LoadState,
+  Task,
+  TaskPlacement,
+  TaskStatus,
+  TaskStatusError
+} from "../types";
 
 type TodayPlanProps = {
-  dataStatus: LoadState;
-  plan: Plan | null;
+  planStatus: LoadState;
+  tasksStatus: LoadState;
   todayTasks: Task[];
-  scheduledItems: PlanItem[];
+  scheduledTasks: Array<{ task: Task; placement: TaskPlacement }>;
+  unscheduledTasks: Task[];
   pendingTaskIds: Set<number>;
+  taskErrors: Map<number, TaskStatusError>;
+  changedTaskIds: Set<number>;
   onStatusChange: (task: Task, status: TaskStatus) => Promise<void>;
+  onRetry: (task: Task, status: TaskStatus) => Promise<void>;
 };
 
 function formatTime(value: string | null): string | null {
   return value ? value.slice(0, 5) : null;
 }
 
-function energyLabel(energy: string): string {
-  const labels: Record<string, string> = {
-    low: "Бережный темп",
-    medium: "Обычный темп",
-    high: "Много энергии"
-  };
-
-  return labels[energy] || energy;
-}
-
-function EmptyState({ text }: { text: string }) {
-  return <p className="empty-state">{text}</p>;
+function TaskSkeletons() {
+  return (
+    <div className="task-skeletons" aria-label="Загружаю задачи">
+      {[0, 1, 2].map((item) => <span key={item} />)}
+    </div>
+  );
 }
 
 export default function TodayPlan({
-  dataStatus,
-  plan,
+  planStatus,
+  tasksStatus,
   todayTasks,
-  scheduledItems,
+  scheduledTasks,
+  unscheduledTasks,
   pendingTaskIds,
-  onStatusChange
+  taskErrors,
+  changedTaskIds,
+  onStatusChange,
+  onRetry
 }: TodayPlanProps) {
-  const doneToday = todayTasks.filter((task) => task.status === "done");
-  const taskById = new Map(todayTasks.map((task) => [task.id, task]));
-  const progressPercent = todayTasks.length
-    ? Math.round((doneToday.length / todayTasks.length) * 100)
-    : 0;
-  const allTodayDone = todayTasks.length > 0 && doneToday.length === todayTasks.length;
+  const allDone = todayTasks.length > 0 && todayTasks.every((task) => task.status === "done");
+  const initialLoading = tasksStatus === "loading" && todayTasks.length === 0;
+
+  if (initialLoading) {
+    return <TaskSkeletons />;
+  }
+
+  if (tasksStatus === "error" && todayTasks.length === 0) {
+    return (
+      <section className="empty-day" aria-labelledby="tasks-unavailable-title">
+        <h2 id="tasks-unavailable-title">Задачи пока недоступны</h2>
+        <p>Попробуй обновить день. Твои записи не удалены.</p>
+      </section>
+    );
+  }
+
+  if (todayTasks.length === 0) {
+    return (
+      <section className="empty-day" aria-labelledby="empty-day-title">
+        <h2 id="empty-day-title">На сегодня задач нет</h2>
+        <p>Можно оставить день свободным<br />или рассказать, что появилось.</p>
+      </section>
+    );
+  }
 
   return (
-    <section className="today-plan" aria-labelledby="today-plan-title">
-      <div className="section-heading">
-        <div>
-          <p className="section-kicker">Вот твой день</p>
-          <h2 id="today-plan-title">План на сегодня</h2>
-        </div>
-        {todayTasks.length > 0 && (
-          <div
-            className="plan-progress"
-            aria-label={`Сделано ${doneToday.length} из ${todayTasks.length}`}
-          >
-            <span>
-              {allTodayDone
-                ? "Все задачи закрыты"
-                : `Сделано ${doneToday.length} из ${todayTasks.length}`}
-            </span>
-            <span className="progress-track" aria-hidden="true">
-              <span style={{ width: `${progressPercent}%` }} />
-            </span>
+    <div className="task-sections">
+      {allDone && (
+        <section className="all-done-state" aria-labelledby="all-done-title">
+          <span aria-hidden="true">✓</span>
+          <div>
+            <h2 id="all-done-title">На сегодня достаточно.</h2>
+            <p>Все запланированные шаги завершены.</p>
           </div>
-        )}
-      </div>
+        </section>
+      )}
 
-      {plan?.energy_level && <p className="energy-line">{energyLabel(plan.energy_level)}</p>}
-
-      {dataStatus === "loading" ? (
-        <EmptyState text="Собираю план дня..." />
-      ) : dataStatus === "error" && !plan ? (
-        <EmptyState text="План сейчас недоступен. Попробуй обновить страницу чуть позже." />
-      ) : scheduledItems.length || doneToday.length ? (
-        <ul className="today-task-list">
-          {scheduledItems.map((item) => {
-            const task = item.task_id === null ? null : taskById.get(item.task_id);
-
-            if (!task) {
-              return null;
-            }
-
-            return (
+      {scheduledTasks.length > 0 && (
+        <section className="task-section scheduled-section" aria-labelledby="scheduled-title">
+          <div className="section-heading">
+            <h2 id="scheduled-title">Запланировано</h2>
+            <span>{scheduledTasks.length}</span>
+          </div>
+          <ul className="task-list scheduled-list">
+            {scheduledTasks.map(({ task, placement }) => (
               <TaskRow
-                key={`planned-${task.id}`}
+                key={`scheduled-${task.id}`}
                 task={task}
-                time={formatTime(item.start_time)}
+                time={formatTime(placement.startTime)}
                 pending={pendingTaskIds.has(task.id)}
+                error={taskErrors.get(task.id) || null}
+                changed={changedTaskIds.has(task.id)}
+                scheduled
                 onStatusChange={onStatusChange}
+                onRetry={onRetry}
               />
-            );
-          })}
-          {doneToday.map((task) => (
-            <TaskRow
-              key={`done-${task.id}`}
-              task={task}
-              time={null}
-              pending={pendingTaskIds.has(task.id)}
-              onStatusChange={onStatusChange}
-            />
-          ))}
-        </ul>
-      ) : (
-        <EmptyState text="На сегодня пока ничего не запланировано" />
+            ))}
+          </ul>
+        </section>
       )}
 
-      {allTodayDone && (
-        <p className="completion-note">День закрыт мягко. Можно выдохнуть.</p>
+      {unscheduledTasks.length > 0 && (
+        <section className="task-section unscheduled-section" aria-labelledby="unscheduled-title">
+          <div className="section-heading">
+            <h2 id="unscheduled-title">{allDone ? "Завершено" : "Без времени"}</h2>
+            <span>{unscheduledTasks.length}</span>
+          </div>
+          <ul className="task-list unscheduled-list">
+            {unscheduledTasks.map((task) => (
+              <TaskRow
+                key={`unscheduled-${task.id}`}
+                task={task}
+                time={null}
+                pending={pendingTaskIds.has(task.id)}
+                error={taskErrors.get(task.id) || null}
+                changed={changedTaskIds.has(task.id)}
+                onStatusChange={onStatusChange}
+                onRetry={onRetry}
+              />
+            ))}
+          </ul>
+          {planStatus === "error" && (
+            <p className="section-note">Расписание загрузилось не полностью. Задачи сохранены.</p>
+          )}
+        </section>
       )}
-    </section>
+    </div>
   );
 }

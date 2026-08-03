@@ -33,6 +33,7 @@ export type Plan = {
   id: number;
   date: string;
   summary: string | null;
+  focus_text: string;
   energy_level: string | null;
   budget_limit: number | null;
   status: string;
@@ -55,4 +56,27 @@ export type TodayData = {
   plan: Plan;
   tasks: Task[];
   goals: Goal[];
+};
+
+export type TaskPlacement = {
+  taskId: number;
+  startTime: string | null;
+  endTime: string | null;
+  planStatus: string;
+};
+
+export type TaskStatusError = {
+  retryStatus: TaskStatus;
+};
+
+export type PlanChange = {
+  kind: "added" | "moved" | "completed" | "restored" | "unscheduled";
+  title: string;
+  detail: string | null;
+};
+
+export type PlanUpdate = {
+  title: string;
+  message: string | null;
+  changes: PlanChange[];
 };

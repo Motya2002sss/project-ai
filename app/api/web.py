@@ -22,7 +22,7 @@ from app.services.message_service import (
     profile_to_response,
     task_to_response,
 )
-from app.services.planning_service import rebuild_day_plan
+from app.services.planning_service import get_plan_date, rebuild_day_plan
 from app.services.task_service import list_user_tasks, mark_task_done, set_task_status
 from app.services.user_service import get_or_create_user_by_external_id
 
@@ -67,10 +67,16 @@ def get_goals(
 @router.get("/tasks/{user_external_id}", response_model=list[TaskResponse])
 def get_tasks(
     user_external_id: str,
+    date: DateSelector | None = None,
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
     user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
-    tasks = list_user_tasks(db=db, user=user)
+    plan_date = (
+        get_plan_date(ParsedUserMessage(intent="show_tasks", date=date))
+        if date
+        else None
+    )
+    tasks = list_user_tasks(db=db, user=user, target_date=plan_date)
 
     return [task_to_response(task) for task in tasks]
 

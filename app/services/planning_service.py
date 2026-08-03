@@ -16,6 +16,41 @@ PRIORITY_ORDER = {
     "low": 2,
 }
 
+FOCUS_TEXT_MAX_LENGTH = 180
+
+
+def _truncate_focus_text(value: str) -> str:
+    if len(value) <= FOCUS_TEXT_MAX_LENGTH:
+        return value
+
+    shortened = value[: FOCUS_TEXT_MAX_LENGTH - 1].rsplit(" ", 1)[0].rstrip(" ,.;:—-")
+    return f"{shortened}…"
+
+
+def build_plan_focus(day_plan: DayPlan) -> str:
+    """Build safe Today copy from persisted plan items, never from raw parser text."""
+    items = list(day_plan.items)
+    scheduled = [item for item in items if item.status == "planned"]
+    unscheduled = [item for item in items if item.status == "not_scheduled"]
+
+    if not items:
+        return "План пока пуст. Можно оставить день свободным."
+
+    if unscheduled:
+        if scheduled:
+            text = f"Сначала — {scheduled[0].title}. На сегодня поместится не всё: оставил главное."
+        else:
+            text = "На сегодня поместится не всё. Задачи без времени не потеряны."
+
+        return _truncate_focus_text(text)
+
+    if len(scheduled) == 1:
+        return _truncate_focus_text(f"Сначала — {scheduled[0].title}. На сегодня этого достаточно.")
+
+    return _truncate_focus_text(
+        f"Сначала — {scheduled[0].title}, затем — {scheduled[1].title}."
+    )
+
 
 def get_plan_date(parsed_message: ParsedUserMessage | None = None) -> date:
     if parsed_message and parsed_message.date == "tomorrow":

@@ -21,7 +21,12 @@ from app.services.goal_service import (
     list_active_goals,
     suggest_tasks_from_goals,
 )
-from app.services.planning_service import format_day_plan, get_plan_date, rebuild_day_plan
+from app.services.planning_service import (
+    build_plan_focus,
+    format_day_plan,
+    get_plan_date,
+    rebuild_day_plan,
+)
 from app.services.task_service import (
     clear_user_tasks,
     create_tasks_from_parsed_message,
@@ -97,6 +102,7 @@ def plan_to_response(day_plan: DayPlan) -> PlanResponse:
         id=day_plan.id,
         date=day_plan.date,
         summary=day_plan.summary,
+        focus_text=build_plan_focus(day_plan),
         energy_level=day_plan.energy_level,
         budget_limit=day_plan.budget_limit,
         status=day_plan.status,
