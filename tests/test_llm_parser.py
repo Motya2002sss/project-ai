@@ -547,7 +547,7 @@ def test_llm_content_polishes_missing_daily_summary_skipped_titles():
     assert "бюджет" in parsed.skipped_task_titles
 
 
-def test_llm_content_polishes_reschedule_intent_over_profile():
+def test_llm_content_polishes_day_availability_intent_over_profile():
     parsed = parser._parse_llm_content(
         json.dumps(
             {
@@ -558,8 +558,44 @@ def test_llm_content_polishes_reschedule_intent_over_profile():
         text="Работаю до 19",
     )
 
-    assert parsed.intent == "reschedule"
+    assert parsed.intent == "set_day_availability"
+    assert parsed.work_context == "day"
     assert parsed.work_until == "19:00"
+
+
+@pytest.mark.parametrize(
+    ("text", "intent", "work_context", "work_start", "work_until", "task_count"),
+    [
+        ("Я работаю с 9 до 18", "set_work_schedule", "permanent", "09:00", "18:00", 0),
+        ("Сегодня работаю с 10 до 19", "set_day_availability", "day", "10:00", "19:00", 0),
+        ("По будням работаю с 9 до 18", "set_work_schedule", "permanent", "09:00", "18:00", 0),
+        ("Добавь рабочую задачу на час", "create_task", None, None, None, 1),
+        ("В 15:00 рабочий созвон", "create_event", None, None, None, 1),
+        ("Внести работу с 9 до 18", "set_work_schedule", "ambiguous", "09:00", "18:00", 0),
+        ("Добавь работу с 9 до 18", "set_work_schedule", "ambiguous", "09:00", "18:00", 0),
+        ("Я сегодня не работаю", "set_day_availability", "off", None, None, 0),
+        ("Сегодня рабочий день до 20", "set_day_availability", "day", None, "20:00", 0),
+    ],
+)
+def test_work_messages_have_distinct_semantics(
+    monkeypatch,
+    text,
+    intent,
+    work_context,
+    work_start,
+    work_until,
+    task_count,
+):
+    monkeypatch.setattr(settings, "llm_enabled", False)
+    monkeypatch.setattr(settings, "llm_provider", "mock")
+
+    parsed = parser.parse_user_message(text)
+
+    assert parsed.intent == intent
+    assert parsed.work_context == work_context
+    assert parsed.work_start == work_start
+    assert parsed.work_until == work_until
+    assert len(parsed.tasks) == task_count
 
 
 def test_llm_content_repairs_invalid_operation_intent_before_validation():

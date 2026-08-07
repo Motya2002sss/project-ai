@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -20,6 +20,9 @@ class DayPlan(Base):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     energy_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
     budget_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    work_override_mode: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    work_start_time: Mapped[Time | None] = mapped_column(Time, nullable=True)
+    work_end_time: Mapped[Time | None] = mapped_column(Time, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="draft")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 

@@ -144,6 +144,7 @@ def _case_passes(parsed, expected: dict) -> bool:
         "date",
         "work_start",
         "work_until",
+        "work_context",
         "sleep_time",
         "energy_level",
     ]:

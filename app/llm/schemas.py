@@ -6,6 +6,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 
 Intent = Literal[
+    "set_work_schedule",
+    "set_day_availability",
+    "create_task",
+    "create_event",
     "update_profile",
     "show_profile",
     "update_goals",
@@ -26,6 +30,7 @@ Priority = Literal["low", "medium", "high"]
 TaskOperation = Literal["create", "update", "cancel", "complete"]
 SchedulingType = Literal["fixed", "flexible", "unscheduled"]
 PreferredWindow = Literal["morning", "afternoon", "evening", "anytime"]
+WorkContext = Literal["permanent", "day", "off", "ambiguous"]
 
 TIME_RE = re.compile(r"^\d{2}:\d{2}$")
 
@@ -170,6 +175,7 @@ class ParsedUserMessage(BaseModel):
     date: DateValue | None = None
     work_start: str | None = None
     work_until: str | None = None
+    work_context: WorkContext | None = None
     sleep_time: str | None = None
     budget_limit: int | None = Field(default=None, ge=0)
     energy_level: EnergyLevel | None = None

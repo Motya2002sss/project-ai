@@ -177,7 +177,7 @@ def _extract_budget(text: str) -> int | None:
 
 def _extract_work_start(text: str) -> str | None:
     match = re.search(
-        r"(?:работаю|работа|график)[^\d]*(?:с|от)\s*(\d{1,2})(?::(\d{2}))?",
+        r"(?:работаю|работ\w*|график)[^\d]*(?:с|от)\s*(\d{1,2})(?::(\d{2}))?",
         text,
         re.IGNORECASE,
     )
@@ -190,7 +190,7 @@ def _extract_work_start(text: str) -> str | None:
 
 def _extract_work_until(text: str) -> str | None:
     match = re.search(
-        r"(?:работаю|работа|график)[^\d]*(?:с|от)\s*\d{1,2}(?::\d{2})?\s*(?:до|-)\s*(\d{1,2})(?::(\d{2}))?",
+        r"(?:работаю|работ\w*|график|рабоч\w*\s+день)[^\d]*(?:с|от)\s*\d{1,2}(?::\d{2})?\s*(?:до|-)\s*(\d{1,2})(?::(\d{2}))?",
         text,
         re.IGNORECASE,
     )
@@ -199,7 +199,7 @@ def _extract_work_until(text: str) -> str | None:
         return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
 
     match = re.search(
-        r"(?:работаю|работа|свободен|освобожусь|задержался|задержусь)[^\d]*(\d{1,2})(?::(\d{2}))?",
+        r"(?:работаю|работ\w*|рабоч\w*\s+день|свободен|освобожусь|задержался|задержусь)[^\d]*(\d{1,2})(?::(\d{2}))?",
         text,
         re.IGNORECASE,
     )
@@ -208,6 +208,61 @@ def _extract_work_until(text: str) -> str | None:
         return None
 
     return _normalize_time(int(match.group(1)), int(match.group(2) or 0))
+
+
+def _work_message_semantics(text: str) -> tuple[str | None, str | None]:
+    normalized = text.lower().replace("ё", "е")
+    explicit_task = bool(re.search(r"\bрабоч\w*\s+задач\w*\b", normalized))
+    explicit_event = bool(
+        re.search(r"\b(?:созвон\w*|встреч\w*|совещан\w*|звонок\w*)\b", normalized)
+        and _extract_task_time(text)
+        and not re.search(r"[,;\n]|\b(?:отмен\w*|перенес\w*|перенос\w*)\b", normalized)
+    )
+
+    if explicit_task:
+        return "create_task", None
+
+    if explicit_event:
+        return "create_event", None
+
+    work_start = _extract_work_start(text)
+    work_until = _extract_work_until(text)
+    day_off = bool(re.search(r"\b(?:сегодня|завтра)\s+не\s+работаю\b|\bне\s+работаю\s+(?:сегодня|завтра)\b", normalized))
+    mentions_schedule = bool(
+        re.search(
+            r"\b(?:работаю|работ\w*|график|рабоч\w*\s+день|задержался|задержусь|освобожусь)\b",
+            normalized,
+        )
+    )
+
+    if not mentions_schedule or not (work_start or work_until or day_off):
+        return None, None
+
+    ambiguous = bool(
+        re.search(r"^\s*(?:внес\w*|добав\w*)\s+работ\w*\b", normalized)
+        and not re.search(r"\b(?:задач\w*|созвон\w*|встреч\w*|совещан\w*)\b", normalized)
+    )
+
+    if ambiguous:
+        return "set_work_schedule", "ambiguous"
+
+    if day_off:
+        return "set_day_availability", "off"
+
+    persistent_signal = bool(
+        re.search(r"\b(?:мой\s+график|обычно|по\s+будням|кажд\w*\s+день)\b", normalized)
+    )
+
+    if work_until and not work_start and not persistent_signal:
+        return "set_day_availability", "day"
+
+    if _extract_date(text) in {"today", "tomorrow"} or re.search(
+        r"\b(?:задержался|задержусь|освобожусь)\b",
+        normalized,
+    ):
+        return "set_day_availability", "day"
+
+    return "set_work_schedule", "permanent"
 
 
 def _extract_sleep_time(text: str) -> str | None:
@@ -775,6 +830,11 @@ def _extract_summary_titles(text: str) -> tuple[list[str], list[str]]:
 def _detect_intent(text: str) -> str:
     lowered = text.lower().strip()
 
+    work_intent, _ = _work_message_semantics(text)
+
+    if work_intent:
+        return work_intent
+
     if lowered.startswith("/plan"):
         return "show_plan"
 
@@ -986,6 +1046,8 @@ def _fallback_semantic_tasks(text: str) -> list[ParsedTask]:
 
 def _fallback_parse(text: str) -> ParsedUserMessage:
     intent = _detect_intent(text)
+    work_intent, work_context = _work_message_semantics(text)
+    task_intent = "add_tasks" if intent in {"create_task", "create_event"} else intent
 
     tasks: list[ParsedTask] = []
     goals: list[str] = []
@@ -996,18 +1058,18 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
     context_only = _is_context_only_message(text, energy_level)
     semantic_tasks: list[ParsedTask] = []
 
-    if intent in {"add_tasks", "mark_done", "reschedule"} and not capability_request and not context_only:
+    if task_intent in {"add_tasks", "mark_done", "reschedule"} and not capability_request and not context_only:
         semantic_tasks = _fallback_semantic_tasks(text)
 
         if not semantic_tasks:
-            semantic_task = _fallback_semantic_task(text, intent)
+            semantic_task = _fallback_semantic_task(text, task_intent)
 
             if semantic_task:
                 semantic_tasks = [semantic_task]
 
     if semantic_tasks:
         tasks = semantic_tasks
-    elif intent == "add_tasks" and not capability_request and not context_only:
+    elif task_intent == "add_tasks" and not capability_request and not context_only:
         tasks = _fallback_extract_tasks(text)
 
         if not tasks:
@@ -1041,6 +1103,7 @@ def _fallback_parse(text: str) -> ParsedUserMessage:
         date=parsed_date,
         work_start=_extract_work_start(text),
         work_until=_extract_work_until(text),
+        work_context=work_context,
         sleep_time=_extract_sleep_time(text),
         budget_limit=budget_limit,
         energy_level=energy_level,
@@ -1224,12 +1287,16 @@ def _merge_titles(existing: list[str], extracted: list[str]) -> list[str]:
 
 def _polish_llm_parsed_message(parsed: ParsedUserMessage, text: str) -> ParsedUserMessage:
     fallback_intent = _detect_intent(text)
+    work_intent, work_context = _work_message_semantics(text)
+    task_fallback_intent = (
+        "add_tasks" if fallback_intent in {"create_task", "create_event"} else fallback_intent
+    )
     text_date = _extract_date(text)
     capability_request = _is_capability_request_text(text)
     context_only = _is_context_only_message(text, parsed.energy_level or _extract_energy(text))
     semantic_tasks = (
         _fallback_semantic_tasks(text)
-        if fallback_intent in {"add_tasks", "mark_done", "reschedule"}
+        if task_fallback_intent in {"add_tasks", "mark_done", "reschedule"}
         else []
     )
 
@@ -1267,10 +1334,10 @@ def _polish_llm_parsed_message(parsed: ParsedUserMessage, text: str) -> ParsedUs
 
     semantic_task = None if semantic_tasks or capability_request or context_only else _fallback_semantic_task(
         text,
-        fallback_intent,
+        task_fallback_intent,
     )
 
-    if semantic_task and fallback_intent in {"add_tasks", "mark_done", "reschedule"}:
+    if semantic_task and task_fallback_intent in {"add_tasks", "mark_done", "reschedule"}:
         if (
             semantic_task.operation != "create"
             or semantic_task.needs_clarification
@@ -1380,6 +1447,13 @@ def _polish_llm_parsed_message(parsed: ParsedUserMessage, text: str) -> ParsedUs
     for task in parsed.tasks:
         if task.priority != "high" and _priority(task.title) == "high":
             task.priority = "high"
+
+    if work_intent in {"set_work_schedule", "set_day_availability"}:
+        parsed.intent = work_intent
+        parsed.work_context = work_context
+        parsed.tasks = []
+    elif work_intent in {"create_task", "create_event"}:
+        parsed.intent = work_intent
 
     return parsed
 

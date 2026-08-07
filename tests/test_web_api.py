@@ -694,3 +694,211 @@ def test_low_energy_context_can_be_used_by_follow_up_replan(client: TestClient):
     assert context["day_snapshot"]["tasks"]
     assert proposal["status"] == "confirmation_required"
     assert len(proposal["day_snapshot"]["tasks"]) == 2
+
+
+def test_permanent_work_schedule_does_not_create_task(client: TestClient):
+    payload = client.post(
+        "/api/message",
+        json={
+            "user_external_id": "work-schedule-user",
+            "request_id": "work-schedule-1",
+            "text": "Я работаю с 9 до 18",
+        },
+    ).json()
+
+    assert payload["intent"] == "set_work_schedule"
+    assert payload["status"] == "applied"
+    assert payload["affected_tasks"] == []
+    assert payload["day_snapshot"]["tasks"] == []
+    assert payload["profile"]["work_start_time"] == "09:00:00"
+    assert payload["profile"]["work_end_time"] == "18:00:00"
+
+
+def test_work_schedule_is_user_scoped(client: TestClient):
+    client.post(
+        "/api/message",
+        json={"user_external_id": "work-owner", "text": "Я работаю с 9 до 18"},
+    )
+
+    owner = client.get("/api/profile/work-owner").json()
+    other = client.get("/api/profile/work-other").json()
+
+    assert owner["work_end_time"] == "18:00:00"
+    assert other["work_start_time"] is None
+    assert other["work_end_time"] is None
+
+
+def test_repeated_work_schedule_is_no_change_without_duplicates(client: TestClient):
+    for request_id in ["schedule-repeat-1", "schedule-repeat-2"]:
+        response = client.post(
+            "/api/message",
+            json={
+                "user_external_id": "schedule-repeat-user",
+                "request_id": request_id,
+                "text": "Я работаю с 9 до 18",
+            },
+        )
+
+    payload = response.json()
+    tasks = client.get("/api/tasks/schedule-repeat-user").json()
+
+    assert payload["status"] == "no_change"
+    assert payload["reply_text"].startswith("Рабочее время уже установлено: 09:00–18:00.")
+    assert "План менять не пришлось" in payload["reply_text"]
+    assert tasks == []
+
+
+def test_day_work_override_does_not_change_profile(client: TestClient):
+    user_id = "day-work-override-user"
+    client.post(
+        "/api/message",
+        json={"user_external_id": user_id, "text": "Я работаю с 9 до 18"},
+    )
+    payload = client.post(
+        "/api/message",
+        json={"user_external_id": user_id, "text": "Сегодня работаю с 10 до 20"},
+    ).json()
+    profile = client.get(f"/api/profile/{user_id}").json()
+
+    assert payload["intent"] == "set_day_availability"
+    assert payload["day_snapshot"]["day_context"] == {
+        "energy_level": None,
+        "budget_limit": None,
+        "work_override_mode": "busy",
+        "work_start_time": "10:00:00",
+        "work_end_time": "20:00:00",
+    }
+    assert profile["work_start_time"] == "09:00:00"
+    assert profile["work_end_time"] == "18:00:00"
+
+
+def test_ambiguous_work_input_requests_clarification_without_mutation(client: TestClient):
+    user_id = "ambiguous-work-user"
+    before = client.get(f"/api/day/{user_id}?date=today").json()
+    payload = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_id,
+            "request_id": "ambiguous-work-1",
+            "text": "Добавь работу с 9 до 18",
+        },
+    ).json()
+    after = client.get(f"/api/day/{user_id}?date=today").json()
+
+    assert payload["status"] == "clarification_required"
+    assert (
+        payload["clarification"]["question"]
+        == "Ты хочешь указать рабочее время с 09:00 до 18:00 или добавить отдельную задачу?"
+    )
+    assert {option["id"] for option in payload["clarification"]["options"]} == {
+        "work_schedule",
+        "task",
+        "cancel",
+    }
+    assert payload["affected_tasks"] == []
+    assert payload["day_snapshot"]["tasks"] == []
+    assert before["plan_version"] == after["plan_version"]
+    assert before["tasks"] == after["tasks"] == []
+
+
+def test_ambiguous_work_input_never_creates_default_hour_task(client: TestClient):
+    user_id = "ambiguous-no-hour-user"
+    payload = client.post(
+        "/api/message",
+        json={"user_external_id": user_id, "text": "Внести работу с 9 до 18"},
+    ).json()
+
+    assert payload["parsed"]["tasks"] == []
+    assert client.get(f"/api/tasks/{user_id}").json() == []
+    assert all(item["task_id"] is None for item in payload["day_snapshot"]["plan"]["items"])
+
+
+def test_empty_day_focus_uses_work_schedule_not_raw_command(client: TestClient):
+    payload = client.post(
+        "/api/message",
+        json={"user_external_id": "work-focus-user", "text": "Я работаю с 9 до 18"},
+    ).json()
+
+    assert payload["day_snapshot"]["focus_text"] == "Рабочий день до 18:00. Вечер пока свободен."
+    assert "Я работаю" not in payload["day_snapshot"]["focus_text"]
+
+
+def test_work_schedule_returns_factual_plan_diff(client: TestClient):
+    payload = client.post(
+        "/api/message",
+        json={"user_external_id": "work-diff-user", "text": "Я работаю с 9 до 18"},
+    ).json()
+
+    assert payload["plan_diff"]["availability_change"] == "Рабочее время обновлено: 09:00–18:00."
+    assert payload["plan_diff"]["created_task_ids"] == []
+
+
+def test_work_schedule_snapshot_has_no_phantom_task(client: TestClient):
+    payload = client.post(
+        "/api/message",
+        json={"user_external_id": "work-snapshot-user", "text": "Я работаю с 9 до 18"},
+    ).json()
+    snapshot = payload["day_snapshot"]
+
+    assert snapshot["tasks"] == []
+    assert snapshot["scheduled_items"] == []
+    assert snapshot["unscheduled_items"] == []
+    assert snapshot["progress"] == {"done": 0, "total": 0}
+
+
+def test_weekday_work_schedule_requires_confirmation(client: TestClient):
+    user_id = "weekday-work-user"
+    payload = client.post(
+        "/api/message",
+        json={"user_external_id": user_id, "text": "По будням работаю с 9 до 18"},
+    ).json()
+    profile = client.get(f"/api/profile/{user_id}").json()
+
+    assert payload["status"] == "confirmation_required"
+    assert {option["id"] for option in payload["confirmation"]["options"]} == {"apply", "cancel"}
+    assert profile["work_start_time"] is None
+    assert profile["work_end_time"] is None
+
+
+def test_day_off_confirmation_applies_only_to_today(client: TestClient):
+    user_id = "day-off-user"
+    client.post(
+        "/api/message",
+        json={"user_external_id": user_id, "text": "Я работаю с 9 до 18"},
+    )
+    proposal = client.post(
+        "/api/message",
+        json={"user_external_id": user_id, "text": "Я сегодня не работаю"},
+    ).json()
+    applied = client.post(
+        "/api/message",
+        json={
+            "user_external_id": user_id,
+            "interaction_id": proposal["confirmation"]["id"],
+            "option_id": "apply",
+            "text": "применить",
+        },
+    ).json()
+    profile = client.get(f"/api/profile/{user_id}").json()
+
+    assert proposal["status"] == "confirmation_required"
+    assert applied["status"] == "applied"
+    assert applied["day_snapshot"]["day_context"]["work_override_mode"] == "off"
+    assert applied["day_snapshot"]["day_context"]["work_end_time"] is None
+    assert profile["work_end_time"] == "18:00:00"
+
+
+def test_explicit_work_task_and_event_still_create_tasks(client: TestClient):
+    flexible = client.post(
+        "/api/message",
+        json={"user_external_id": "explicit-work-user", "text": "Добавь рабочую задачу на час"},
+    ).json()
+    fixed = client.post(
+        "/api/message",
+        json={"user_external_id": "explicit-work-event-user", "text": "Завтра в 15:00 рабочий созвон"},
+    ).json()
+
+    assert flexible["intent"] == "create_task"
+    assert flexible["affected_tasks"][0]["scheduling_type"] == "flexible"
+    assert fixed["intent"] == "create_event"
+    assert fixed["affected_tasks"][0]["fixed_start"] == "15:00:00"

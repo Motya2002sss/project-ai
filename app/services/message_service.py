@@ -64,7 +64,9 @@ from app.services.planning_service import (
     PlanBuildResult,
     build_day_plan_result,
     build_plan_focus,
+    effective_work_window,
     format_day_plan,
+    format_plan_date,
     get_plan_date,
     rebuild_day_plan,
 )
@@ -182,7 +184,7 @@ def plan_to_response(day_plan: DayPlan) -> PlanResponse:
         id=day_plan.id,
         date=day_plan.date,
         summary=day_plan.summary,
-        focus_text=build_plan_focus(day_plan),
+        focus_text=build_plan_focus(day_plan, day_plan.user),
         energy_level=day_plan.energy_level,
         budget_limit=day_plan.budget_limit,
         status=day_plan.status,
@@ -232,6 +234,9 @@ def day_snapshot_to_response(
         day_context=DayContextResponse(
             energy_level=day_plan.energy_level,
             budget_limit=day_plan.budget_limit,
+            work_override_mode=day_plan.work_override_mode,
+            work_start_time=effective_work_window(day_plan, user)[0],
+            work_end_time=effective_work_window(day_plan, user)[1],
         ),
         tasks=task_responses,
         goals=[goal_to_response(goal) for goal in goals],
@@ -273,6 +278,7 @@ def _build_plan_diff(
     *,
     conflict: str | None = None,
     clarification: str | None = None,
+    availability_change: str | None = None,
 ) -> PlanDiffResponse:
     after = _snapshot_plan_placements(db, user)
     moved: list[MovedPlanItemResponse] = []
@@ -310,6 +316,7 @@ def _build_plan_diff(
         cancelled_task_ids=[task.id for task in mutation.cancelled],
         moved_plan_items=moved,
         unscheduled_task_ids=unscheduled_ids,
+        availability_change=availability_change,
         conflict=conflict,
         clarification=clarification,
     )
@@ -355,6 +362,162 @@ def _task_mutation_reply(
         "Принял. План обновлён по фактическим изменениям.\n\n"
         + "\n\n".join(sections)
         + f"\n\n{format_day_plan(day_plan, user=user)}{_planning_context_hint(user)}"
+    )
+
+
+def _format_work_window(start: time | None, end: time | None) -> str:
+    start_text = _format_clock(start, missing="начало не указано")
+    end_text = _format_clock(end, missing="конец не указан")
+    return f"{start_text}–{end_text}"
+
+
+def _format_clock(value: time | None, *, missing: str = "время не указано") -> str:
+    return value.strftime("%H:%M") if value else missing
+
+
+def _process_work_schedule_message(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse:
+    next_start = time.fromisoformat(parsed_message.work_start) if parsed_message.work_start else user.work_start_time
+    next_end = time.fromisoformat(parsed_message.work_until) if parsed_message.work_until else user.work_end_time
+    next_sleep = time.fromisoformat(parsed_message.sleep_time) if parsed_message.sleep_time else user.sleep_time
+    changed = (
+        next_start != user.work_start_time
+        or next_end != user.work_end_time
+        or next_sleep != user.sleep_time
+    )
+    window = _format_work_window(next_start, next_end)
+
+    if not changed:
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            f"Рабочее время уже установлено: {window}. План менять не пришлось.",
+            user=user,
+            status="no_change",
+        )
+
+    before = _snapshot_plan_placements(db, user)
+
+    try:
+        update_user_profile_from_parsed_message(
+            db=db,
+            user=user,
+            parsed_message=parsed_message,
+            commit=False,
+        )
+        plan_result = build_day_plan_result(
+            db=db,
+            user=user,
+            plan_date=get_plan_date(user=user),
+            commit=False,
+        )
+        change = f"Рабочее время обновлено: {window}."
+        plan_diff = _build_plan_diff(
+            db,
+            user,
+            TaskMutationResult(),
+            before,
+            [plan_result],
+            availability_change=change,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        change,
+        user=user,
+        day_plan=plan_result.day_plan,
+        plan_diff=plan_diff,
+    )
+
+
+def _process_day_availability_message(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse:
+    plan_date = get_plan_date(parsed_message, user=user)
+    existing = (
+        db.query(DayPlan)
+        .filter(DayPlan.user_id == user.id, DayPlan.date == plan_date)
+        .one_or_none()
+    )
+    next_mode = "off" if parsed_message.work_context == "off" else "busy"
+    next_start = time.fromisoformat(parsed_message.work_start) if parsed_message.work_start else None
+    next_end = time.fromisoformat(parsed_message.work_until) if parsed_message.work_until else None
+    changed = (
+        existing is None
+        or existing.work_override_mode != next_mode
+        or existing.work_start_time != next_start
+        or existing.work_end_time != next_end
+    )
+
+    if not changed:
+        label = format_plan_date(plan_date, user=user).capitalize()
+        reply = (
+            f"{label} уже отмечен как день без работы."
+            if next_mode == "off"
+            else f"Рабочее время на {format_plan_date(plan_date, user=user)} уже установлено."
+        )
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            reply,
+            day_plan=existing,
+            status="no_change",
+        )
+
+    before = _snapshot_plan_placements(db, user)
+
+    try:
+        plan_result = build_day_plan_result(
+            db=db,
+            user=user,
+            parsed_message=parsed_message,
+            plan_date=plan_date,
+            commit=False,
+        )
+        effective_start, effective_end = effective_work_window(plan_result.day_plan, user)
+        day_label = format_plan_date(plan_date, user=user)
+        change = (
+            f"На {day_label} рабочее время отключено."
+            if next_mode == "off"
+            else f"Рабочее время на {day_label} обновлено: {_format_work_window(effective_start, effective_end)}."
+        )
+        plan_diff = _build_plan_diff(
+            db,
+            user,
+            TaskMutationResult(),
+            before,
+            [plan_result],
+            availability_change=change,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        change,
+        day_plan=plan_result.day_plan,
+        plan_diff=plan_diff,
     )
 
 
@@ -532,7 +695,7 @@ def _process_parsed_user_message(
     parsed_message: ParsedUserMessage,
     source: MessageSource = "telegram_text",
 ) -> MessageResponse:
-    if parsed_message.intent in {"add_tasks", "mark_done"} or (
+    if parsed_message.intent in {"add_tasks", "create_task", "create_event", "mark_done"} or (
         parsed_message.intent == "reschedule" and parsed_message.tasks
     ):
         return _process_task_operations_message(
@@ -675,6 +838,24 @@ def _process_parsed_user_message(
             "Запомнил настройки профиля:\n\n"
             f"{format_user_profile(user)}\n\n"
             "Теперь буду учитывать это при планировании."
+        )
+
+    if parsed_message.intent == "set_work_schedule":
+        return _process_work_schedule_message(
+            db,
+            user,
+            user_external_id,
+            source,
+            parsed_message,
+        )
+
+    if parsed_message.intent == "set_day_availability":
+        return _process_day_availability_message(
+            db,
+            user,
+            user_external_id,
+            source,
+            parsed_message,
         )
         return _base_response(
             user_external_id,
@@ -987,6 +1168,130 @@ def _build_tracking_clarification(
         clarification_question=clarification.question,
         clarification=clarification,
         plan_diff=PlanDiffResponse(clarification=clarification.question),
+    )
+
+
+def _build_work_schedule_clarification(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse:
+    start = time.fromisoformat(parsed_message.work_start) if parsed_message.work_start else None
+    end = time.fromisoformat(parsed_message.work_until) if parsed_message.work_until else None
+    question = (
+        f"Ты хочешь указать рабочее время с {_format_clock(start)} "
+        f"до {_format_clock(end)} или добавить отдельную задачу?"
+    )
+    options = [
+        {"id": "work_schedule", "label": "Рабочее время", "value": "рабочее время"},
+        {"id": "task", "label": "Отдельная задача", "value": "отдельная задача"},
+        {"id": "cancel", "label": "Отмена", "value": "отмена"},
+    ]
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="clarification",
+        original_message=parsed_message.raw_text or "",
+        context={
+            "flow": "work_schedule_ambiguity",
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question=question,
+        options=options,
+    )
+    clarification = _clarification_payload(interaction)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        question,
+        status="clarification_required",
+        clarification_question=question,
+        clarification=clarification,
+        plan_diff=PlanDiffResponse(clarification=question),
+    )
+
+
+def _build_work_schedule_confirmation(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse:
+    start = time.fromisoformat(parsed_message.work_start) if parsed_message.work_start else user.work_start_time
+    end = time.fromisoformat(parsed_message.work_until) if parsed_message.work_until else user.work_end_time
+    summary = f"Постоянный график по будням: {_format_work_window(start, end)}."
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="confirmation",
+        original_message=parsed_message.raw_text or "",
+        context={
+            "flow": "work_schedule_confirmation",
+            "title": "Обновить постоянный рабочий график?",
+            "summary": summary,
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question=summary,
+        options=[
+            {"id": "apply", "label": "Применить", "value": "применить"},
+            {"id": "cancel", "label": "Отмена", "value": "отмена"},
+        ],
+        base_plan_version=_current_plan_version(db, user, get_plan_date(user=user)),
+    )
+    confirmation = _confirmation_payload(interaction)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        f"{confirmation.title}\n\n{confirmation.summary}",
+        status="confirmation_required",
+        confirmation=confirmation,
+    )
+
+
+def _build_day_off_confirmation(
+    db: Session,
+    user: User,
+    user_external_id: str,
+    source: MessageSource,
+    parsed_message: ParsedUserMessage,
+) -> MessageResponse:
+    plan_date = get_plan_date(parsed_message, user=user)
+    day_label = format_plan_date(plan_date, user=user)
+    summary = f"Убрать рабочее время только на {day_label}? Постоянный профиль не изменится."
+    interaction = create_pending_interaction(
+        db,
+        user,
+        source=source,
+        kind="confirmation",
+        original_message=parsed_message.raw_text or "",
+        context={
+            "flow": "day_off_confirmation",
+            "title": "Отметить день без работы?",
+            "summary": summary,
+            "parsed_message": parsed_message.model_dump(mode="json"),
+        },
+        question=summary,
+        options=[
+            {"id": "apply", "label": "Применить", "value": "применить"},
+            {"id": "cancel", "label": "Отмена", "value": "отмена"},
+        ],
+        base_plan_version=_current_plan_version(db, user, plan_date),
+    )
+    confirmation = _confirmation_payload(interaction)
+    return _base_response(
+        user_external_id,
+        source,
+        parsed_message,
+        f"{confirmation.title}\n\n{confirmation.summary}",
+        status="confirmation_required",
+        confirmation=confirmation,
     )
 
 
@@ -1494,6 +1799,94 @@ def _handle_pending_interaction(
     selected = interaction_option(interaction.options, option_id, text)
     flow = context.get("flow")
 
+    if flow == "work_schedule_ambiguity":
+        if selected == "work_schedule":
+            resolve_interaction(db, interaction, commit=False)
+            parsed_message.intent = "set_work_schedule"
+            parsed_message.work_context = "permanent"
+            parsed_message.tasks = []
+            return _process_work_schedule_message(
+                db,
+                user,
+                user_external_id,
+                source,
+                parsed_message,
+            )
+
+        if selected == "task" and parsed_message.work_start and parsed_message.work_until:
+            resolve_interaction(db, interaction, commit=False)
+            start = time.fromisoformat(parsed_message.work_start)
+            end = time.fromisoformat(parsed_message.work_until)
+            duration = (end.hour * 60 + end.minute) - (start.hour * 60 + start.minute)
+
+            if duration <= 0:
+                duration += 24 * 60
+
+            task_message = ParsedUserMessage(
+                intent="create_task",
+                date=parsed_message.date or "today",
+                tasks=[
+                    ParsedTask(
+                        title="Работа",
+                        scheduling_type="fixed",
+                        target_date=parsed_message.date or "today",
+                        fixed_start=parsed_message.work_start,
+                        fixed_end=parsed_message.work_until,
+                        estimated_minutes=duration,
+                    )
+                ],
+                raw_text=interaction.original_message,
+            )
+            return _process_parsed_user_message(
+                db,
+                user,
+                user_external_id,
+                task_message,
+                source,
+            )
+
+        return _repeat_clarification(user_external_id, source, parsed_message, interaction)
+
+    if flow == "work_schedule_confirmation":
+        if selected == "apply":
+            resolve_interaction(db, interaction, commit=False)
+            return _process_work_schedule_message(
+                db,
+                user,
+                user_external_id,
+                source,
+                parsed_message,
+            )
+
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            interaction.question or "Применить постоянный рабочий график?",
+            status="confirmation_required",
+            confirmation=_confirmation_payload(interaction),
+        )
+
+    if flow == "day_off_confirmation":
+        if selected == "apply":
+            resolve_interaction(db, interaction, commit=False)
+            return _process_day_availability_message(
+                db,
+                user,
+                user_external_id,
+                source,
+                parsed_message,
+            )
+
+        return _base_response(
+            user_external_id,
+            source,
+            parsed_message,
+            interaction.question or "Убрать рабочее время на этот день?",
+            status="confirmation_required",
+            confirmation=_confirmation_payload(interaction),
+        )
+
     if flow == "tracking_kind":
         lowered = text.lower().replace("ё", "е")
 
@@ -1845,10 +2238,14 @@ def _run_standard_message(
     parsed_message: ParsedUserMessage,
 ) -> tuple[User, MessageResponse]:
     if parsed_message.intent in {
+        "set_work_schedule",
+        "set_day_availability",
         "update_profile",
         "update_goals",
         "suggest_goal_tasks",
         "add_tasks",
+        "create_task",
+        "create_event",
         "mark_done",
         "daily_summary",
         "clear_tasks",
@@ -1965,7 +2362,56 @@ def process_user_message(
             parser_ms = (perf_counter() - parser_started_at) * 1000
             normalize_parsed_tasks(parsed_message, text)
 
-            if is_capability_request(text):
+            if parsed_message.work_context == "ambiguous":
+                response = _build_work_schedule_clarification(
+                    db,
+                    user,
+                    user_external_id,
+                    source,
+                    parsed_message,
+                )
+            elif parsed_message.intent == "set_work_schedule" and re.search(
+                r"\bпо\s+будням\b",
+                text,
+                re.IGNORECASE,
+            ):
+                response = _build_work_schedule_confirmation(
+                    db,
+                    user,
+                    user_external_id,
+                    source,
+                    parsed_message,
+                )
+            elif parsed_message.intent == "set_day_availability" and parsed_message.work_context == "off":
+                plan_date = get_plan_date(parsed_message, user=user)
+                existing_plan = (
+                    db.query(DayPlan)
+                    .filter(DayPlan.user_id == user.id, DayPlan.date == plan_date)
+                    .one_or_none()
+                )
+                has_work = (
+                    effective_work_window(existing_plan, user)[1] is not None
+                    if existing_plan
+                    else user.work_end_time is not None
+                )
+                response = (
+                    _build_day_off_confirmation(
+                        db,
+                        user,
+                        user_external_id,
+                        source,
+                        parsed_message,
+                    )
+                    if has_work
+                    else _run_standard_message(
+                        db,
+                        user,
+                        user_external_id,
+                        source,
+                        parsed_message,
+                    )[1]
+                )
+            elif is_capability_request(text):
                 response = _base_response(
                     user_external_id,
                     source,

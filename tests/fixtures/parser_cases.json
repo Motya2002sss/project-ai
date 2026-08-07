@@ -2,7 +2,8 @@
   {
     "text": "Мой график с 10 до 19, хочу спать в 00:30",
     "expected": {
-      "intent": "update_profile",
+      "intent": "set_work_schedule",
+      "work_context": "permanent",
       "work_start": "10:00",
       "work_until": "19:00",
       "sleep_time": "00:30"
@@ -11,7 +12,8 @@
   {
     "text": "Обычно работаю с 8 до 17",
     "expected": {
-      "intent": "update_profile",
+      "intent": "set_work_schedule",
+      "work_context": "permanent",
       "work_start": "08:00",
       "work_until": "17:00"
     }
@@ -174,21 +176,24 @@
   {
     "text": "Я задержался до 20",
     "expected": {
-      "intent": "reschedule",
+      "intent": "set_day_availability",
+      "work_context": "day",
       "work_until": "20:00"
     }
   },
   {
     "text": "Освобожусь в 21",
     "expected": {
-      "intent": "reschedule",
+      "intent": "set_day_availability",
+      "work_context": "day",
       "work_until": "21:00"
     }
   },
   {
     "text": "Работаю до 19",
     "expected": {
-      "intent": "reschedule",
+      "intent": "set_day_availability",
+      "work_context": "day",
       "work_until": "19:00"
     }
   },
@@ -227,7 +232,7 @@
   {
     "text": "Сегодня в 19:00 созвон на час",
     "expected": {
-      "intent": "add_tasks",
+      "intent": "create_event",
       "date": "today",
       "tasks_match": [
         {
@@ -517,6 +522,94 @@
           "referenced_task_title": "проект"
         }
       ]
+    }
+  },
+  {
+    "text": "Я работаю с 9 до 18",
+    "expected": {
+      "intent": "set_work_schedule",
+      "work_context": "permanent",
+      "work_start": "09:00",
+      "work_until": "18:00",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Сегодня работаю с 10 до 19",
+    "expected": {
+      "intent": "set_day_availability",
+      "work_context": "day",
+      "date": "today",
+      "work_start": "10:00",
+      "work_until": "19:00",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "По будням работаю с 9 до 18",
+    "expected": {
+      "intent": "set_work_schedule",
+      "work_context": "permanent",
+      "work_start": "09:00",
+      "work_until": "18:00",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Добавь рабочую задачу на час",
+    "expected": {
+      "intent": "create_task",
+      "tasks_count": 1,
+      "tasks_match": [
+        {
+          "title_contains": "рабочую задачу",
+          "scheduling_type": "flexible",
+          "estimated_minutes": 60
+        }
+      ]
+    }
+  },
+  {
+    "text": "В 15:00 рабочий созвон",
+    "expected": {
+      "intent": "create_event",
+      "tasks_count": 1,
+      "tasks_match": [
+        {
+          "title_contains": "рабочий созвон",
+          "scheduling_type": "fixed",
+          "fixed_start": "15:00"
+        }
+      ]
+    }
+  },
+  {
+    "text": "Внести работу с 9 до 18",
+    "expected": {
+      "intent": "set_work_schedule",
+      "work_context": "ambiguous",
+      "work_start": "09:00",
+      "work_until": "18:00",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Добавь работу с 9 до 18",
+    "expected": {
+      "intent": "set_work_schedule",
+      "work_context": "ambiguous",
+      "work_start": "09:00",
+      "work_until": "18:00",
+      "tasks_count": 0
+    }
+  },
+  {
+    "text": "Я сегодня не работаю",
+    "expected": {
+      "intent": "set_day_availability",
+      "work_context": "off",
+      "date": "today",
+      "tasks_count": 0
     }
   }
 ]

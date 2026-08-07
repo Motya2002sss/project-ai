@@ -115,7 +115,13 @@ export type DaySnapshot = {
   unscheduled_items: PlanItem[];
   completed_count: number;
   total_count: number;
-  day_context: { energy_level: string | null; budget_limit: number | null };
+  day_context: {
+    energy_level: string | null;
+    budget_limit: number | null;
+    work_override_mode: string | null;
+    work_start_time: string | null;
+    work_end_time: string | null;
+  };
   tasks: Task[];
   goals: Goal[];
   routines: Routine[];
@@ -160,6 +166,7 @@ export type PlanDiff = {
   moved_plan_items: MovedPlanItem[];
   unscheduled_task_ids: number[];
   created_routine_ids: number[];
+  availability_change: string | null;
   conflict: string | null;
   clarification: string | null;
 };
@@ -190,7 +197,7 @@ export type TaskStatusError = {
 };
 
 export type PlanChange = {
-  kind: "added" | "moved" | "completed" | "cancelled" | "restored" | "unscheduled" | "routine";
+  kind: "added" | "moved" | "completed" | "cancelled" | "restored" | "unscheduled" | "routine" | "availability";
   title: string;
   detail: string | null;
 };

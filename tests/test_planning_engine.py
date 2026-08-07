@@ -11,6 +11,7 @@ import app.services.time_service as time_service
 from app.core.config import settings
 from app.db.base import Base
 from app.llm.schemas import ParsedUserMessage
+from app.models.day_plan import DayPlan
 from app.models.task import Task
 from app.models.user import User
 from app.services.message_service import process_user_message
@@ -441,3 +442,56 @@ def test_multi_action_message_applies_each_clause_without_cross_date_leak(db: Se
         build_day_plan_result(db, gym.user, plan_date=TEST_DATE, now=TEST_NOW).day_plan,
         gym.user,
     )
+
+
+def test_personal_task_starts_after_work_buffer(db: Session):
+    process_user_message(db, "work-buffer-user", "Я работаю с 9 до 18", "web_text")
+    response = process_user_message(
+        db,
+        "work-buffer-user",
+        "Сегодня хочу разобрать документы",
+        "web_text",
+    )
+    item = next(item for item in response.plan_summary.items if item.task_id)
+
+    assert item.start_time == time(18, settings.plan_start_buffer_minutes)
+
+
+def test_fixed_event_and_flexible_task_do_not_overlap_work_or_each_other(db: Session):
+    process_user_message(db, "work-overlap-user", "Я работаю с 9 до 18", "web_text")
+    fixed = process_user_message(
+        db,
+        "work-overlap-user",
+        "Сегодня в 19:00 созвон на час",
+        "web_text",
+    )
+    flexible = process_user_message(
+        db,
+        "work-overlap-user",
+        "Сегодня хочу разобрать документы",
+        "web_text",
+    )
+    items = {item.task_id: item for item in flexible.plan_summary.items}
+
+    assert items[fixed.affected_tasks[0].id].start_time == time(19)
+    assert items[flexible.affected_tasks[0].id].start_time == time(20)
+    day_plan = db.query(DayPlan).one()
+    user = db.query(User).filter_by(external_id="work-overlap-user").one()
+    assert_plan_has_no_overlaps(day_plan, user)
+
+
+def test_task_stays_unscheduled_when_work_and_sleep_leave_no_slot(db: Session):
+    user = create_user(
+        db,
+        external_id="work-no-slot-user",
+        work_start_time=time(9),
+        work_end_time=time(22),
+        sleep_time=time(23),
+    )
+    task = create_task(db, user, "Личная задача", estimated_minutes=60)
+
+    result = build_day_plan_result(db, user, plan_date=TEST_DATE, now=TEST_NOW)
+    item = next(item for item in result.day_plan.items if item.task_id == task.id)
+
+    assert item.status == "not_scheduled"
+    assert item.unscheduled_reason == "no_available_slot"

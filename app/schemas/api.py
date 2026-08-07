@@ -130,6 +130,7 @@ class PlanDiffResponse(BaseModel):
     moved_plan_items: list[MovedPlanItemResponse] = Field(default_factory=list)
     unscheduled_task_ids: list[int] = Field(default_factory=list)
     created_routine_ids: list[int] = Field(default_factory=list)
+    availability_change: str | None = None
     conflict: str | None = None
     clarification: str | None = None
 
@@ -174,6 +175,9 @@ class DayProgressResponse(BaseModel):
 class DayContextResponse(BaseModel):
     energy_level: str | None = None
     budget_limit: int | None = None
+    work_override_mode: str | None = None
+    work_start_time: time | None = None
+    work_end_time: time | None = None
 
 
 class DaySnapshotResponse(BaseModel):

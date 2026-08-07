@@ -198,6 +198,14 @@ function buildPlanUpdate(
     }
   }
 
+  if (response.plan_diff.availability_change) {
+    changes.push({
+      kind: "availability",
+      title: response.plan_diff.availability_change,
+      detail: null
+    });
+  }
+
   const limitedChanges = changes.slice(0, 5);
   const goalOnly = response.affected_goals.length > 0 && limitedChanges.length === 0;
 

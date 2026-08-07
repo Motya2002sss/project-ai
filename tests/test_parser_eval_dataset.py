@@ -39,6 +39,7 @@ def test_mock_parser_eval_dataset(monkeypatch):
             "date",
             "work_start",
             "work_until",
+            "work_context",
             "sleep_time",
             "energy_level",
         ]:

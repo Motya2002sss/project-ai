@@ -181,13 +181,36 @@ def _truncate_focus_text(value: str) -> str:
     return f"{shortened}…"
 
 
-def build_plan_focus(day_plan: DayPlan) -> str:
+def effective_work_window(day_plan: DayPlan, user: User | None = None) -> tuple[time | None, time | None]:
+    profile = user or getattr(day_plan, "user", None)
+
+    if day_plan.work_override_mode == "off":
+        return None, None
+
+    if day_plan.work_override_mode == "busy":
+        return (
+            day_plan.work_start_time or (profile.work_start_time if profile else None),
+            day_plan.work_end_time or (profile.work_end_time if profile else None),
+        )
+
+    return (
+        profile.work_start_time if profile else None,
+        profile.work_end_time if profile else None,
+    )
+
+
+def build_plan_focus(day_plan: DayPlan, user: User | None = None) -> str:
     """Build safe Today copy from persisted plan items, never from raw parser text."""
     items = list(day_plan.items)
     scheduled = [item for item in items if item.status == "planned"]
     unscheduled = [item for item in items if item.status == "not_scheduled"]
 
     if not items:
+        _, work_end = effective_work_window(day_plan, user)
+
+        if work_end:
+            return f"Рабочий день до {work_end.strftime('%H:%M')}. Вечер пока свободен."
+
         return "План пока пуст. Можно оставить день свободным."
 
     if unscheduled:
@@ -274,16 +297,14 @@ def _work_interval(
     user: User,
     plan_date: date,
     bounds: TimeInterval,
-    parsed_message: ParsedUserMessage | None,
+    day_plan: DayPlan,
 ) -> TimeInterval | None:
-    parsed_end = _parse_hhmm(parsed_message.work_until) if parsed_message else None
-    work_end = parsed_end or user.work_end_time
+    work_start, work_end = effective_work_window(day_plan, user)
 
     if not work_end:
         return None
 
-    work_start = user.work_start_time or bounds.start.time()
-    start = combine_user_datetime(plan_date, work_start, user)
+    start = combine_user_datetime(plan_date, work_start or bounds.start.time(), user)
     end = combine_user_datetime(plan_date, work_end, user)
 
     if end <= start:
@@ -456,6 +477,9 @@ def build_day_plan_result(
     previous_plan_context = (
         day_plan.energy_level,
         day_plan.budget_limit,
+        day_plan.work_override_mode,
+        day_plan.work_start_time,
+        day_plan.work_end_time,
         day_plan.status,
     )
 
@@ -463,6 +487,13 @@ def build_day_plan_result(
         day_plan.energy_level = parsed_message.energy_level or day_plan.energy_level
         day_plan.budget_limit = parsed_message.budget_limit or day_plan.budget_limit
         day_plan.summary = parsed_message.raw_text or "Автоматический план дня"
+
+        if parsed_message.intent == "set_day_availability":
+            day_plan.work_override_mode = (
+                "off" if parsed_message.work_context == "off" else "busy"
+            )
+            day_plan.work_start_time = _parse_hhmm(parsed_message.work_start)
+            day_plan.work_end_time = _parse_hhmm(parsed_message.work_until)
 
     existing_items = list(day_plan.items)
     previous_items_signature = sorted(
@@ -502,7 +533,7 @@ def build_day_plan_result(
         .all()
     )
     occupied: list[TimeInterval] = []
-    work_interval = _work_interval(user, resolved_date, bounds, parsed_message)
+    work_interval = _work_interval(user, resolved_date, bounds, day_plan)
 
     if work_interval:
         occupied.append(work_interval)
@@ -665,6 +696,9 @@ def build_day_plan_result(
     current_plan_context = (
         day_plan.energy_level,
         day_plan.budget_limit,
+        day_plan.work_override_mode,
+        day_plan.work_start_time,
+        day_plan.work_end_time,
         day_plan.status,
     )
 

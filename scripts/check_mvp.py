@@ -28,7 +28,7 @@ def main() -> None:
     settings.llm_api_key = None
 
     samples = {
-        "Мой график с 10 до 19, хочу спать в 00:30": ("update_profile", None),
+        "Мой график с 10 до 19, хочу спать в 00:30": ("set_work_schedule", None),
         "Моя цель: накопить 500000 рублей, научиться рисовать": ("update_goals", None),
         "Покажи цели": ("show_goals", None),
         "Что сделать для целей?": ("suggest_goal_tasks", None),
@@ -72,6 +72,15 @@ def main() -> None:
 
     recurrence = parse_user_message("Утром хожу в зал")
     assert recurrence.tasks[0].needs_clarification is True
+
+    ambiguous_work = parse_user_message("Добавь работу с 9 до 18")
+    assert ambiguous_work.intent == "set_work_schedule"
+    assert ambiguous_work.work_context == "ambiguous"
+    assert ambiguous_work.tasks == []
+
+    day_work = parse_user_message("Сегодня работаю с 10 до 20")
+    assert day_work.intent == "set_day_availability"
+    assert day_work.work_context == "day"
 
     print("mvp check ok")
 

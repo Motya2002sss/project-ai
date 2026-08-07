@@ -110,6 +110,8 @@ def update_user_profile_from_parsed_message(
     db: Session,
     user: User,
     parsed_message: ParsedUserMessage,
+    *,
+    commit: bool = True,
 ) -> User:
     work_start = _parse_hhmm(parsed_message.work_start)
     work_until = _parse_hhmm(parsed_message.work_until)
@@ -124,8 +126,11 @@ def update_user_profile_from_parsed_message(
     if sleep_time:
         user.sleep_time = sleep_time
 
-    db.commit()
-    db.refresh(user)
+    db.flush()
+
+    if commit:
+        db.commit()
+        db.refresh(user)
 
     return user
 
