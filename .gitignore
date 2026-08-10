@@ -11,6 +11,8 @@ __pycache__/
 .idea/
 .vscode/
 .pytest_cache/
+output/playwright/
+.playwright-cli/
 .mypy_cache/
 .ruff_cache/
 .coverage

@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "AI Life Planner",
+    "slug": "ai-life-planner",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "ailifeplanner",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "dev.ailifeplanner.mobile"
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
