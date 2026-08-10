@@ -1,0 +1,461 @@
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LIB = ROOT / "scripts" / "dogfood" / "lib.sh"
+START = ROOT / "scripts" / "dogfood" / "start.sh"
+
+
+def run_lib(
+    command: str,
+    *args: str,
+    input_text: str | None = None,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", "-c", f'source "$1"; {command}', "bash", str(LIB), *args],
+        check=False,
+        capture_output=True,
+        env={**os.environ, **(env or {})},
+        input=input_text,
+        text=True,
+    )
+
+
+def test_read_env_value_returns_exact_value_after_first_equals(tmp_path: Path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "APP_NAME=AI Life Planner\nMOBILE_DOGFOOD_TOKEN=abc=def-123\n",
+        encoding="utf-8",
+    )
+
+    result = run_lib('dogfood_read_env_value MOBILE_DOGFOOD_TOKEN "$2"', str(env_file))
+
+    assert result.returncode == 0
+    assert result.stdout == "abc=def-123"
+    assert result.stderr == ""
+
+
+def test_read_env_value_matches_dotenv_last_value_wins_semantics(tmp_path: Path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "MOBILE_DOGFOOD_TOKEN=old-local-value\n"
+        "MOBILE_DOGFOOD_TOKEN=current-local-value\n",
+        encoding="utf-8",
+    )
+
+    result = run_lib('dogfood_read_env_value MOBILE_DOGFOOD_TOKEN "$2"', str(env_file))
+
+    assert result.returncode == 0
+    assert result.stdout == "current-local-value"
+
+
+def test_extract_tunnel_url_accepts_only_exact_quick_tunnel_hostname():
+    result = run_lib(
+        "dogfood_extract_tunnel_url",
+        input_text=(
+            "2026-08-10 INF requesting tunnel\n"
+            "Visit https://calm-dogfood-day.trycloudflare.com when ready\n"
+        ),
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "https://calm-dogfood-day.trycloudflare.com\n"
+
+
+def test_extract_tunnel_url_rejects_suffix_confusion():
+    result = run_lib(
+        "dogfood_extract_tunnel_url",
+        input_text="https://calm-dogfood-day.trycloudflare.com.attacker.example\n",
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_write_mobile_env_rejects_invalid_url_without_overwriting(tmp_path: Path):
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("EXPO_PUBLIC_API_BASE_URL=https://known-good.example\n", encoding="utf-8")
+
+    result = run_lib(
+        'dogfood_write_mobile_env "$2" "$3"',
+        "http://127.0.0.1:8000",
+        str(env_file),
+    )
+
+    assert result.returncode != 0
+    assert result.stderr == ""
+    assert env_file.read_text(encoding="utf-8") == (
+        "EXPO_PUBLIC_API_BASE_URL=https://known-good.example\n"
+    )
+
+
+def test_write_mobile_env_writes_only_public_tunnel_url(tmp_path: Path):
+    env_file = tmp_path / ".env.local"
+
+    result = run_lib(
+        'dogfood_write_mobile_env "$2" "$3"',
+        "https://calm-dogfood-day.trycloudflare.com",
+        str(env_file),
+    )
+
+    assert result.returncode == 0
+    assert env_file.read_text(encoding="utf-8") == (
+        "EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com\n"
+    )
+
+
+def test_wait_for_health_retries_transient_transport_failure(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    attempt_file = tmp_path / "attempts"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "attempts=0\n"
+        "test ! -f \"$DOGFOOD_ATTEMPT_FILE\" || attempts=$(<\"$DOGFOOD_ATTEMPT_FILE\")\n"
+        "attempts=$((attempts + 1))\n"
+        "printf '%s' \"$attempts\" >\"$DOGFOOD_ATTEMPT_FILE\"\n"
+        "test \"$attempts\" -ge 4\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    result = run_lib(
+        'dogfood_wait_for_health "$2" 6 0',
+        "https://calm-dogfood-day.trycloudflare.com/health",
+        env={
+            "DOGFOOD_ATTEMPT_FILE": str(attempt_file),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 0
+    assert attempt_file.read_text(encoding="utf-8") == "4"
+
+
+def test_wait_for_health_propagates_child_exit_without_exhausting_retries(
+    tmp_path: Path,
+):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    attempt_file = tmp_path / "attempts"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "attempts=0\n"
+        "test ! -f \"$DOGFOOD_ATTEMPT_FILE\" || attempts=$(<\"$DOGFOOD_ATTEMPT_FILE\")\n"
+        "attempts=$((attempts + 1))\n"
+        "printf '%s' \"$attempts\" >\"$DOGFOOD_ATTEMPT_FILE\"\n"
+        "sleep 0.1\n"
+        "exit 1\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    result = run_lib(
+        '(sleep 0.02; exit 7) & child_pid=$!; '
+        'dogfood_wait_for_health_while_process_alive "$2" "$child_pid" 20 0',
+        "https://calm-dogfood-day.trycloudflare.com/health",
+        env={
+            "DOGFOOD_ATTEMPT_FILE": str(attempt_file),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 7
+    assert attempt_file.read_text(encoding="utf-8") == "1"
+
+
+def test_warm_ollama_uses_non_thinking_probe_and_long_keep_alive(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    args_file = tmp_path / "curl-args"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$@\" >\"$DOGFOOD_CURL_ARGS_FILE\"\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    result = run_lib(
+        'dogfood_warm_ollama "$2" "$3"',
+        "http://127.0.0.1:11434",
+        "qwen3.5:4b",
+        env={
+            "DOGFOOD_CURL_ARGS_FILE": str(args_file),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 0
+    args = args_file.read_text(encoding="utf-8")
+    assert '"model":"qwen3.5:4b"' in args
+    assert '"think":false' in args
+    assert '"num_predict":1' in args
+    assert '"keep_alive":"24h"' in args
+    assert "http://127.0.0.1:11434/api/chat" in args
+
+
+def test_warm_ollama_rejects_model_name_that_can_break_json(tmp_path: Path):
+    result = run_lib(
+        'dogfood_warm_ollama "$2" "$3"',
+        "http://127.0.0.1:11434",
+        'model"}',
+    )
+
+    assert result.returncode != 0
+    assert result.stderr == ""
+
+
+def test_single_terminal_launcher_help_describes_owned_stack():
+    result = subprocess.run(
+        [START, "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "одном терминале" in result.stdout
+    assert "FastAPI" in result.stdout
+    assert "Cloudflare Quick Tunnel" in result.stdout
+    assert "Expo" in result.stdout
+
+
+def test_live_check_keeps_bearer_token_out_of_curl_argv(tmp_path: Path):
+    test_root = tmp_path / "project"
+    dogfood_dir = test_root / "scripts" / "dogfood"
+    shutil.copytree(ROOT / "scripts" / "dogfood", dogfood_dir)
+    (test_root / "mobile").mkdir()
+    (test_root / "mobile" / ".env.local").write_text(
+        "EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com\n",
+        encoding="utf-8",
+    )
+    secret = "secret-visible-if-expanded-in-argv"
+    (test_root / ".env").write_text(
+        f"MOBILE_DOGFOOD_TOKEN={secret}\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    argv_file = tmp_path / "curl-argv"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$@\" >>\"$DOGFOOD_CURL_ARGV_FILE\"\n"
+        "url=\"${!#}\"\n"
+        "has_valid_auth=0\n"
+        "has_invalid_auth=0\n"
+        "for arg in \"$@\"; do\n"
+        "  test \"$arg\" != '--config' || has_valid_auth=1\n"
+        f"  test \"$arg\" != 'Authorization: Bearer {secret}' || has_valid_auth=1\n"
+        "  test \"$arg\" != 'Authorization: Bearer intentionally-invalid' || has_invalid_auth=1\n"
+        "done\n"
+        "case \"$url\" in\n"
+        "  */health) code=200 ;;\n"
+        "  */api/v1/capture) code=422 ;;\n"
+        "  */api/v1/today)\n"
+        "    if test \"$has_invalid_auth\" -eq 1; then code=401\n"
+        "    elif test \"$has_valid_auth\" -eq 1; then code=200\n"
+        "    else code=401\n"
+        "    fi ;;\n"
+        "  *) code=500 ;;\n"
+        "esac\n"
+        "printf '%s' \"$code\"\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    fake_venv_bin = test_root / ".venv" / "bin"
+    fake_venv_bin.mkdir(parents=True)
+    fake_python = fake_venv_bin / "python"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\ncat >/dev/null\necho 'validated'\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+
+    result = subprocess.run(
+        [dogfood_dir / "check.sh"],
+        check=False,
+        capture_output=True,
+        env={
+            **os.environ,
+            "DOGFOOD_CURL_ARGV_FILE": str(argv_file),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    curl_argv = argv_file.read_text(encoding="utf-8")
+    assert secret not in curl_argv
+    assert curl_argv.splitlines().count("--max-time") == 5
+
+
+def prepare_fake_supervisor_stack(
+    tmp_path: Path,
+    *,
+    backend_exit_code: int | None = None,
+) -> tuple[Path, dict[str, str], Path]:
+    test_root = tmp_path / "supervisor-project"
+    dogfood_dir = test_root / "scripts" / "dogfood"
+    shutil.copytree(ROOT / "scripts" / "dogfood", dogfood_dir)
+    (test_root / "mobile").mkdir()
+
+    events_file = tmp_path / "events"
+    backend_ready = tmp_path / "backend-ready"
+    tunnel_ready = tmp_path / "tunnel-ready"
+
+    if backend_exit_code is None:
+        backend_body = (
+            "trap 'echo backend-stopped >>\"$DOGFOOD_EVENTS_FILE\"; exit 0' TERM INT\n"
+            "echo backend-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+            "touch \"$DOGFOOD_BACKEND_READY\"\n"
+            "while :; do sleep 0.05; done\n"
+        )
+    else:
+        backend_body = (
+            "echo backend-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+            f"exit {backend_exit_code}\n"
+        )
+    (dogfood_dir / "start-backend.sh").write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n" + backend_body,
+        encoding="utf-8",
+    )
+    (dogfood_dir / "start-tunnel.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "test -f \"$DOGFOOD_BACKEND_READY\"\n"
+        "trap 'echo tunnel-stopped >>\"$DOGFOOD_EVENTS_FILE\"; exit 0' TERM INT\n"
+        "echo tunnel-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+        "sleep \"${DOGFOOD_FAKE_TUNNEL_DELAY:-0}\"\n"
+        "printf '%s\\n' 'EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com' >\"$DOGFOOD_TEST_ROOT/mobile/.env.local\"\n"
+        "touch \"$DOGFOOD_TUNNEL_READY\"\n"
+        "if test -n \"${DOGFOOD_TUNNEL_READY_FILE:-}\"; then\n"
+        "  printf '%s' 'https://calm-dogfood-day.trycloudflare.com' >\"$DOGFOOD_TUNNEL_READY_FILE\"\n"
+        "fi\n"
+        "while :; do sleep 0.05; done\n",
+        encoding="utf-8",
+    )
+    (dogfood_dir / "start-mobile.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "test -f \"$DOGFOOD_BACKEND_READY\"\n"
+        "test -f \"$DOGFOOD_TUNNEL_READY\"\n"
+        "echo mobile-start >>\"$DOGFOOD_EVENTS_FILE\"\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "supervisor-bin"
+    fake_bin.mkdir()
+    for command in ("lsof", "pgrep"):
+        fake_command = fake_bin / command
+        fake_command.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+        fake_command.chmod(0o755)
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "url=\"${!#}\"\n"
+        "case \"$url\" in\n"
+        "  http://127.0.0.1:8000/health) test -f \"$DOGFOOD_BACKEND_READY\" ;;\n"
+        "  https://calm-dogfood-day.trycloudflare.com/health)\n"
+        "    test \"${DOGFOOD_STALE_TUNNEL_HEALTH:-0}\" -eq 1 || test -f \"$DOGFOOD_TUNNEL_READY\" ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+
+    environment = {
+        **os.environ,
+        "DOGFOOD_BACKEND_READY": str(backend_ready),
+        "DOGFOOD_EVENTS_FILE": str(events_file),
+        "DOGFOOD_TEST_ROOT": str(test_root),
+        "DOGFOOD_TUNNEL_READY": str(tunnel_ready),
+        "PATH": f"{fake_bin}:/usr/bin:/bin",
+    }
+    return dogfood_dir / "start.sh", environment, events_file
+
+
+def test_single_terminal_launcher_starts_in_order_and_cleans_up_owned_processes(
+    tmp_path: Path,
+):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    unrelated = subprocess.Popen(["sleep", "5"])
+    try:
+        result = subprocess.run(
+            [launcher],
+            check=False,
+            capture_output=True,
+            env=environment,
+            text=True,
+            timeout=5,
+        )
+
+        assert result.returncode == 0, result.stderr
+        events = events_file.read_text(encoding="utf-8").splitlines()
+        assert events[:3] == ["backend-start", "tunnel-start", "mobile-start"]
+        assert sorted(events[3:]) == ["backend-stopped", "tunnel-stopped"]
+        assert unrelated.poll() is None
+    finally:
+        unrelated.terminate()
+        unrelated.wait(timeout=2)
+
+
+def test_single_terminal_launcher_stops_when_backend_child_fails(tmp_path: Path):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(
+        tmp_path,
+        backend_exit_code=7,
+    )
+
+    result = subprocess.run(
+        [launcher],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode != 0
+    assert events_file.read_text(encoding="utf-8").splitlines() == [
+        "backend-start"
+    ]
+    assert "FastAPI завершился во время запуска" in result.stderr
+    assert "unbound variable" not in result.stderr
+
+
+def test_single_terminal_launcher_ignores_seeded_healthy_stale_tunnel_url(
+    tmp_path: Path,
+):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    test_root = Path(environment["DOGFOOD_TEST_ROOT"])
+    (test_root / "mobile" / ".env.local").write_text(
+        "EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com\n",
+        encoding="utf-8",
+    )
+    environment["DOGFOOD_FAKE_TUNNEL_DELAY"] = "0.3"
+    environment["DOGFOOD_STALE_TUNNEL_HEALTH"] = "1"
+
+    result = subprocess.run(
+        [launcher],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    events = events_file.read_text(encoding="utf-8").splitlines()
+    assert events[:3] == ["backend-start", "tunnel-start", "mobile-start"]

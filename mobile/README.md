@@ -6,6 +6,16 @@ Expo/React Native iOS client for the live Today P0 vertical slice.
 
 Requirements: Node.js LTS, npm, a running backend, and either Expo Go on an iPhone or Xcode Simulator.
 
+For the configured physical-iPhone dogfood stack, run one command from the repository root:
+
+```bash
+./scripts/dogfood/start.sh
+```
+
+Keep that Terminal window open and scan its Expo QR. `Ctrl+C` stops Expo, FastAPI, and the temporary HTTPS tunnel together.
+
+For manual mobile-only development:
+
 ```bash
 cd mobile
 npm install
@@ -32,7 +42,7 @@ EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
 
 `127.0.0.1` is suitable for iOS Simulator. A physical iPhone must use an HTTPS URL reachable from the device.
 
-3. Open **Профиль → Доступ к backend**, enter the matching bearer token once, and tap **Подключить**. Native builds store it in iOS Keychain through Expo SecureStore; the token is never an `EXPO_PUBLIC_*` value.
+3. Open **Профиль → Данные и доступ**, enter the matching bearer token once, and tap **Подключить**. Native builds store it in iOS Keychain through Expo SecureStore; the token is never an `EXPO_PUBLIC_*` value.
 
 4. Check the backend before opening Today:
 
