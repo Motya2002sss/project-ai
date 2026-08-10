@@ -338,11 +338,25 @@ def prepare_fake_supervisor_stack(
         "test -f \"$DOGFOOD_BACKEND_READY\"\n"
         "trap 'echo tunnel-stopped >>\"$DOGFOOD_EVENTS_FILE\"; exit 0' TERM INT\n"
         "echo tunnel-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+        "tunnel_attempts=0\n"
+        "if test -n \"${DOGFOOD_TUNNEL_ATTEMPTS_FILE:-}\"; then\n"
+        "  test ! -f \"$DOGFOOD_TUNNEL_ATTEMPTS_FILE\" || tunnel_attempts=$(<\"$DOGFOOD_TUNNEL_ATTEMPTS_FILE\")\n"
+        "  tunnel_attempts=$((tunnel_attempts + 1))\n"
+        "  printf '%s' \"$tunnel_attempts\" >\"$DOGFOOD_TUNNEL_ATTEMPTS_FILE\"\n"
+        "fi\n"
+        "if test \"${DOGFOOD_FAIL_FIRST_TUNNEL:-0}\" -eq 1; then\n"
+        "  test \"$tunnel_attempts\" -ne 1 || exit 9\n"
+        "fi\n"
         "sleep \"${DOGFOOD_FAKE_TUNNEL_DELAY:-0}\"\n"
         "printf '%s\\n' 'EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com' >\"$DOGFOOD_TEST_ROOT/mobile/.env.local\"\n"
         "touch \"$DOGFOOD_TUNNEL_READY\"\n"
         "if test -n \"${DOGFOOD_TUNNEL_READY_FILE:-}\"; then\n"
         "  printf '%s' 'https://calm-dogfood-day.trycloudflare.com' >\"$DOGFOOD_TUNNEL_READY_FILE\"\n"
+        "fi\n"
+        "if test \"${DOGFOOD_EXIT_FIRST_TUNNEL_AFTER_READY:-0}\" -eq 1 && test \"$tunnel_attempts\" -eq 1; then\n"
+        "  printf '%s' \"$$\" >\"$DOGFOOD_TUNNEL_PID_FILE\"\n"
+        "  while test ! -f \"$DOGFOOD_RELEASE_FIRST_TUNNEL\"; do sleep 0.01; done\n"
+        "  exit 9\n"
         "fi\n"
         "while :; do sleep 0.05; done\n",
         encoding="utf-8",
@@ -369,6 +383,15 @@ def prepare_fake_supervisor_stack(
         "case \"$url\" in\n"
         "  http://127.0.0.1:8000/health) test -f \"$DOGFOOD_BACKEND_READY\" ;;\n"
         "  https://calm-dogfood-day.trycloudflare.com/health)\n"
+        "    if test \"${DOGFOOD_EXIT_FIRST_TUNNEL_AFTER_READY:-0}\" -eq 1 && test \"$(<\"$DOGFOOD_TUNNEL_ATTEMPTS_FILE\")\" -eq 1; then\n"
+        "      touch \"$DOGFOOD_RELEASE_FIRST_TUNNEL\"\n"
+        "      tunnel_pid=$(<\"$DOGFOOD_TUNNEL_PID_FILE\")\n"
+        "      for _ in $(seq 1 100); do\n"
+        "        tunnel_state=$(ps -p \"$tunnel_pid\" -o state= 2>/dev/null || true)\n"
+        "        test -n \"$tunnel_state\" && test \"${tunnel_state#*Z}\" != \"$tunnel_state\" && break\n"
+        "        sleep 0.01\n"
+        "      done\n"
+        "    fi\n"
         "    test \"${DOGFOOD_STALE_TUNNEL_HEALTH:-0}\" -eq 1 || test -f \"$DOGFOOD_TUNNEL_READY\" ;;\n"
         "  *) exit 1 ;;\n"
         "esac\n",
@@ -459,3 +482,65 @@ def test_single_terminal_launcher_ignores_seeded_healthy_stale_tunnel_url(
     assert result.returncode == 0, result.stderr
     events = events_file.read_text(encoding="utf-8").splitlines()
     assert events[:3] == ["backend-start", "tunnel-start", "mobile-start"]
+
+
+def test_single_terminal_launcher_retries_with_a_new_tunnel_after_failure(
+    tmp_path: Path,
+):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    attempts_file = tmp_path / "tunnel-attempts"
+    environment["DOGFOOD_FAIL_FIRST_TUNNEL"] = "1"
+    environment["DOGFOOD_TUNNEL_ATTEMPTS_FILE"] = str(attempts_file)
+
+    result = subprocess.run(
+        [launcher],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert attempts_file.read_text(encoding="utf-8") == "2"
+    events = events_file.read_text(encoding="utf-8").splitlines()
+    assert events[:4] == [
+        "backend-start",
+        "tunnel-start",
+        "tunnel-start",
+        "mobile-start",
+    ]
+
+
+def test_single_terminal_launcher_rejects_ready_url_from_exited_tunnel(
+    tmp_path: Path,
+):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    attempts_file = tmp_path / "tunnel-attempts"
+    environment.update(
+        {
+            "DOGFOOD_EXIT_FIRST_TUNNEL_AFTER_READY": "1",
+            "DOGFOOD_RELEASE_FIRST_TUNNEL": str(tmp_path / "release-tunnel"),
+            "DOGFOOD_TUNNEL_ATTEMPTS_FILE": str(attempts_file),
+            "DOGFOOD_TUNNEL_PID_FILE": str(tmp_path / "tunnel-pid"),
+        }
+    )
+
+    result = subprocess.run(
+        [launcher],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert attempts_file.read_text(encoding="utf-8") == "2"
+    events = events_file.read_text(encoding="utf-8").splitlines()
+    assert events[:4] == [
+        "backend-start",
+        "tunnel-start",
+        "tunnel-start",
+        "mobile-start",
+    ]
