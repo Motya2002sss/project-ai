@@ -1,28 +1,46 @@
 from sqlalchemy.orm import Session
 
+from app.models.day_plan import DayPlan
 from app.models.task import Task
 from app.models.user import User
-from app.schemas.api import MessageResponse, PlanDiffResponse, TaskStatus
+from app.schemas.api import DaySnapshotResponse, MessageResponse, PlanDiffResponse, TaskStatus
 from app.schemas.mobile import MobileActionResponse, MobileTaskMutationResponse
 from app.services.message_service import day_snapshot_to_response, task_to_response
-from app.services.planning_service import rebuild_day_plan
+from app.services.planning_service import get_plan_date, rebuild_day_plan
 from app.services.task_service import set_task_status
+
+
+def get_mobile_today_snapshot(db: Session, user: User) -> DaySnapshotResponse:
+    plan_date = get_plan_date(user=user)
+    day_plan = (
+        db.query(DayPlan)
+        .filter(DayPlan.user_id == user.id, DayPlan.date == plan_date)
+        .one_or_none()
+    )
+
+    if day_plan is None:
+        day_plan = DayPlan(
+            id=0,
+            user_id=user.id,
+            date=plan_date,
+            summary="Автоматический план дня",
+            status="draft",
+            version=0,
+        )
+
+    return day_snapshot_to_response(db, user, day_plan)
 
 
 def message_to_mobile_response(response: MessageResponse) -> MobileActionResponse:
     if response.request_id is None or response.day_snapshot is None:
         raise RuntimeError("Message pipeline returned an incomplete mobile response")
 
-    already_processing = (
-        response.status == "no_change"
-        and "уже обрабатывается" in response.reply_text.lower()
-    )
-
     return MobileActionResponse(
         request_id=response.request_id,
         status=response.status,
+        reason=response.reason,
         reply_text=response.reply_text,
-        retryable=response.status == "failed" or already_processing,
+        retryable=response.status == "failed" or response.reason == "request_in_progress",
         plan_diff=response.plan_diff,
         clarification=response.clarification,
         confirmation=response.confirmation,

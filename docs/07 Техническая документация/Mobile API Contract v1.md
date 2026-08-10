@@ -130,6 +130,9 @@ Compatibility `/api` блокирует зарезервированные `mobi
 
 Semantics:
 
+- endpoint читает persisted authoritative `DayPlan` и не запускает Planning Engine;
+- если persisted план дня ещё не существует, возвращается пустой server-owned read model с reserved `plan.id=0` и version `0`, без записи в БД и без размещения задач; реальные persisted plan ids начинаются с `1`;
+- открытие и refresh не меняют plan version или placements; любое автоматическое перестроение должно быть отдельной mutation и возвращать factual `PlanDiff + DaySnapshot`;
 - `scheduled_items` — timeline items с сохранённым временем, включая completed history;
 - `unscheduled_items` — items без времени; legacy semantics сохранены для совместимости;
 - `completed_items` — factual subset со status `done` независимо от наличия времени;
@@ -155,6 +158,7 @@ Response:
 {
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
   "status": "applied",
+  "reason": null,
   "reply_text": "Сегодня рабочее время учтено до 20:00.",
   "retryable": false,
   "plan_diff": {
@@ -177,6 +181,8 @@ Response:
 ```
 
 Допустимые lifecycle states: `applied`, `clarification_required`, `confirmation_required`, `conflict`, `no_change`, `unsupported_capability`, `failed`.
+
+Повтор запроса, который ещё выполняется, возвращает `status="no_change"`, typed `reason="request_in_progress"` и `retryable=true`. Machine behavior не зависит от `reply_text`.
 
 Raw parser payload и внутренний `user_external_id` не входят в mobile response.
 

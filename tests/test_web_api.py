@@ -87,6 +87,7 @@ def test_post_message_adds_task(client: TestClient):
     assert payload["intent"] == "add_tasks"
     assert payload["affected_tasks"][0]["title"] == "Разобрать документы"
     assert payload["status"] == "applied"
+    assert "reason" not in payload
     assert payload["plan_diff"]["created_task_ids"] == [payload["affected_tasks"][0]["id"]]
     assert payload["plan_summary"]["date"] == payload["affected_tasks"][0]["target_date"]
     assert "Принял" in payload["reply_text"]

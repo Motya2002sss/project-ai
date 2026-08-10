@@ -25,6 +25,7 @@ MessageStatus = Literal[
     "failed",
     "needs_clarification",
 ]
+MessageReason = Literal["request_in_progress"]
 
 
 class MessageRequest(BaseModel):
@@ -207,6 +208,7 @@ class MessageResponse(BaseModel):
     intent: str
     parsed: dict
     status: MessageStatus = "applied"
+    reason: MessageReason | None = Field(default=None, exclude=True)
     needs_clarification: bool = False
     clarification_question: str | None = None
     reply_text: str

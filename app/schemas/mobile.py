@@ -7,6 +7,7 @@ from app.schemas.api import (
     ConfirmationResponse,
     ConflictResponse,
     DaySnapshotResponse,
+    MessageReason,
     MessageStatus,
     PlanDiffResponse,
     TaskResponse,
@@ -44,6 +45,7 @@ class MobileTaskStatusRequest(BaseModel):
 class MobileActionResponse(BaseModel):
     request_id: str
     status: MessageStatus
+    reason: MessageReason | None = None
     reply_text: str
     retryable: bool = False
     plan_diff: PlanDiffResponse = Field(default_factory=PlanDiffResponse)

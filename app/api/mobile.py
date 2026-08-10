@@ -6,7 +6,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
-from app.llm.schemas import ParsedUserMessage
 from app.models.user import User
 from app.schemas.api import DaySnapshotResponse
 from app.schemas.mobile import (
@@ -16,9 +15,12 @@ from app.schemas.mobile import (
     MobileTaskMutationResponse,
     MobileTaskStatusRequest,
 )
-from app.services.message_service import day_snapshot_to_response, process_user_message
-from app.services.mobile_service import message_to_mobile_response, update_mobile_task_status
-from app.services.planning_service import rebuild_day_plan
+from app.services.message_service import process_user_message
+from app.services.mobile_service import (
+    get_mobile_today_snapshot,
+    message_to_mobile_response,
+    update_mobile_task_status,
+)
 from app.services.user_service import get_or_create_user_by_external_id
 
 
@@ -60,12 +62,7 @@ def get_today(
     user: User = Depends(get_mobile_user),
     db: Session = Depends(get_db),
 ) -> DaySnapshotResponse:
-    day_plan = rebuild_day_plan(
-        db=db,
-        user=user,
-        parsed_message=ParsedUserMessage(intent="show_plan", date="today"),
-    )
-    return day_snapshot_to_response(db, user, day_plan)
+    return get_mobile_today_snapshot(db, user)
 
 
 @router.post("/capture", response_model=MobileActionResponse)

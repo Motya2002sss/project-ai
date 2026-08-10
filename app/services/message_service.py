@@ -20,8 +20,10 @@ from app.schemas.api import (
     ConflictResponse,
     InteractionOptionResponse,
     GoalResponse,
+    MessageReason,
     MessageResponse,
     MessageSource,
+    MessageStatus,
     MovedPlanItemResponse,
     PlanDiffResponse,
     DayContextResponse,
@@ -180,12 +182,12 @@ def profile_to_response(user: User, user_external_id: str) -> ProfileResponse:
     )
 
 
-def plan_to_response(day_plan: DayPlan) -> PlanResponse:
+def plan_to_response(day_plan: DayPlan, user: User | None = None) -> PlanResponse:
     return PlanResponse(
         id=day_plan.id,
         date=day_plan.date,
         summary=day_plan.summary,
-        focus_text=build_plan_focus(day_plan, day_plan.user),
+        focus_text=build_plan_focus(day_plan, user or day_plan.user),
         energy_level=day_plan.energy_level,
         budget_limit=day_plan.budget_limit,
         status=day_plan.status,
@@ -211,7 +213,7 @@ def day_snapshot_to_response(
     user: User,
     day_plan: DayPlan,
 ) -> DaySnapshotResponse:
-    plan = plan_to_response(day_plan)
+    plan = plan_to_response(day_plan, user=user)
     tasks = list_user_tasks(db=db, user=user, target_date=day_plan.date)
     goals = list_active_goals(db=db, user=user)
     routines = list_active_routines(db=db, user=user)
@@ -552,7 +554,8 @@ def _base_response(
     affected_routines: list[Routine] | None = None,
     user: User | None = None,
     day_plan: DayPlan | None = None,
-    status: str = "applied",
+    status: MessageStatus = "applied",
+    reason: MessageReason | None = None,
     clarification_question: str | None = None,
     plan_diff: PlanDiffResponse | None = None,
     clarification: ClarificationResponse | None = None,
@@ -565,6 +568,7 @@ def _base_response(
         intent=parsed_message.intent,
         parsed=parsed_message.model_dump(mode="json"),
         status=status,
+        reason=reason,
         needs_clarification=status in {
             "needs_clarification",
             "clarification_required",
@@ -2333,6 +2337,7 @@ def process_user_message(
             parsed_message,
             "Это изменение уже обрабатывается. Текст сохранён; повтор не создаст дубликат.",
             status="no_change",
+            reason="request_in_progress",
         )
         response.request_id = normalized_request_id
         _attach_day_snapshot(db, user, response, parsed_message)

@@ -14,6 +14,10 @@ from app.core.config import settings
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
+from app.models.day_plan import DayPlan
+from app.schemas.api import MessageResponse
+from app.services.idempotency_service import ReceiptReservation
+from app.services.mobile_service import message_to_mobile_response
 
 
 TEST_TOKEN = "test-mobile-dogfood-token"
@@ -56,6 +60,17 @@ def client(tmp_path: Path, monkeypatch) -> Generator[TestClient, None, None]:
     finally:
         app.dependency_overrides.clear()
         Base.metadata.drop_all(bind=engine)
+
+
+@pytest.fixture()
+def db_session(client: TestClient) -> Generator[Session, None, None]:
+    dependency = app.dependency_overrides[get_db]()
+    db = next(dependency)
+
+    try:
+        yield db
+    finally:
+        dependency.close()
 
 
 def test_mobile_api_requires_bearer_token(client: TestClient):
@@ -101,6 +116,118 @@ def test_mobile_today_returns_complete_snapshot(client: TestClient):
     assert payload["progress"] == {"done": 0, "total": 0}
     assert payload["completed_items"] == []
     assert payload["current_item"] is None
+
+
+def test_mobile_today_read_does_not_persist_empty_plan(
+    client: TestClient,
+    db_session: Session,
+):
+    response = client.get("/api/v1/today", headers=AUTH_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json()["plan"]["id"] == 0
+    assert response.json()["plan_version"] == 0
+    assert db_session.query(DayPlan).count() == 0
+
+
+def test_mobile_today_refresh_preserves_authoritative_plan(client: TestClient, monkeypatch):
+    current_date = datetime.now(timezone.utc).date()
+    initial_now = datetime.combine(
+        current_date,
+        datetime.strptime("07:00", "%H:%M").time(),
+        tzinfo=timezone.utc,
+    )
+    later_now = datetime.combine(
+        current_date,
+        datetime.strptime("22:00", "%H:%M").time(),
+        tzinfo=timezone.utc,
+    )
+    monkeypatch.setattr(planning_service, "get_user_now", lambda user, now=None: initial_now)
+
+    created = client.post(
+        "/api/v1/capture",
+        headers=AUTH_HEADERS,
+        json={
+            "request_id": "today-read-safe-1",
+            "text": "Сегодня хочу оплатить счета",
+        },
+    )
+
+    assert created.status_code == 200
+    authoritative = created.json()["day_snapshot"]
+    authoritative_placements = [
+        (
+            item["task_id"],
+            item["status"],
+            item["start_time"],
+            item["end_time"],
+        )
+        for item in authoritative["plan"]["items"]
+    ]
+    monkeypatch.setattr(planning_service, "get_user_now", lambda user, now=None: later_now)
+
+    first_refresh = client.get("/api/v1/today", headers=AUTH_HEADERS)
+    second_refresh = client.get("/api/v1/today", headers=AUTH_HEADERS)
+
+    assert first_refresh.status_code == second_refresh.status_code == 200
+
+    for refreshed in (first_refresh.json(), second_refresh.json()):
+        placements = [
+            (
+                item["task_id"],
+                item["status"],
+                item["start_time"],
+                item["end_time"],
+            )
+            for item in refreshed["plan"]["items"]
+        ]
+        assert refreshed["plan_version"] == authoritative["plan_version"]
+        assert placements == authoritative_placements
+
+
+def test_mobile_retryable_uses_typed_request_in_progress_reason(client: TestClient):
+    snapshot = client.get("/api/v1/today", headers=AUTH_HEADERS).json()
+    response = MessageResponse(
+        request_id="typed-in-progress-1",
+        user_external_id="mobile:dogfood",
+        source="ios_text",
+        intent="show_plan",
+        parsed={},
+        status="no_change",
+        reason="request_in_progress",
+        reply_text="Обработка продолжается.",
+        day_snapshot=snapshot,
+    )
+
+    mobile_response = message_to_mobile_response(response)
+
+    assert mobile_response.retryable is True
+    assert mobile_response.reason == "request_in_progress"
+
+
+def test_mobile_in_progress_request_exposes_typed_reason(
+    client: TestClient,
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        message_service,
+        "reserve_message_request",
+        lambda *args, **kwargs: ReceiptReservation(processing=True),
+    )
+
+    response = client.post(
+        "/api/v1/capture",
+        headers=AUTH_HEADERS,
+        json={
+            "request_id": "typed-in-progress-2",
+            "text": "Сегодня хочу оплатить счета",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "no_change"
+    assert response.json()["reason"] == "request_in_progress"
+    assert response.json()["retryable"] is True
 
 
 def test_mobile_capture_cannot_select_user_identity(client: TestClient):
