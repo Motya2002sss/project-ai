@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.session import get_db
 from app.llm.schemas import ParsedUserMessage
 from app.schemas.api import (
@@ -32,11 +33,30 @@ from app.services.user_service import get_or_create_user_by_external_id
 router = APIRouter(prefix="/api", tags=["web-api"])
 
 
+def _ensure_compatibility_identity(external_id: str) -> None:
+    normalized = external_id.strip()
+
+    if (
+        normalized.startswith("mobile:")
+        or normalized == settings.mobile_dogfood_user_external_id.strip()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+
+def _get_compatibility_user(db: Session, external_id: str):
+    _ensure_compatibility_identity(external_id)
+    return get_or_create_user_by_external_id(db=db, external_id=external_id)
+
+
 @router.post("/message", response_model=MessageResponse)
 def process_message(
     request: MessageRequest,
     db: Session = Depends(get_db),
 ) -> MessageResponse:
+    _ensure_compatibility_identity(request.user_external_id)
     return process_user_message(
         db=db,
         user_external_id=request.user_external_id,
@@ -54,7 +74,7 @@ def get_day_snapshot(
     date: DateSelector = "today",
     db: Session = Depends(get_db),
 ) -> DaySnapshotResponse:
-    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    user = _get_compatibility_user(db, user_external_id)
     parsed_message = ParsedUserMessage(intent="show_plan", date=date)
     day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
     return day_snapshot_to_response(db, user, day_plan)
@@ -65,7 +85,7 @@ def get_profile(
     user_external_id: str,
     db: Session = Depends(get_db),
 ) -> ProfileResponse:
-    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    user = _get_compatibility_user(db, user_external_id)
 
     return profile_to_response(user, user_external_id)
 
@@ -75,7 +95,7 @@ def get_goals(
     user_external_id: str,
     db: Session = Depends(get_db),
 ) -> list[GoalResponse]:
-    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    user = _get_compatibility_user(db, user_external_id)
     goals = list_active_goals(db=db, user=user)
 
     return [goal_to_response(goal) for goal in goals]
@@ -87,7 +107,7 @@ def get_tasks(
     date: DateSelector | None = None,
     db: Session = Depends(get_db),
 ) -> list[TaskResponse]:
-    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    user = _get_compatibility_user(db, user_external_id)
     plan_date = (
         get_plan_date(ParsedUserMessage(intent="show_tasks", date=date), user=user)
         if date
@@ -104,7 +124,7 @@ def complete_task(
     request: TaskDoneRequest,
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    user = get_or_create_user_by_external_id(db=db, external_id=request.user_external_id)
+    user = _get_compatibility_user(db, request.user_external_id)
     task = mark_task_done(db=db, user=user, task_id=task_id)
 
     if task is None:
@@ -122,7 +142,7 @@ def update_task_status(
     request: TaskStatusRequest,
     db: Session = Depends(get_db),
 ) -> TaskResponse:
-    user = get_or_create_user_by_external_id(db=db, external_id=request.user_external_id)
+    user = _get_compatibility_user(db, request.user_external_id)
     task = set_task_status(
         db=db,
         user=user,
@@ -145,7 +165,7 @@ def get_plan(
     date: DateSelector = "today",
     db: Session = Depends(get_db),
 ) -> PlanResponse:
-    user = get_or_create_user_by_external_id(db=db, external_id=user_external_id)
+    user = _get_compatibility_user(db, user_external_id)
     parsed_message = ParsedUserMessage(intent="show_plan", date=date)
     day_plan = rebuild_day_plan(db=db, user=user, parsed_message=parsed_message)
 

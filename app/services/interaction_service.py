@@ -49,7 +49,11 @@ def get_pending_interaction(
     if interaction_id:
         query = query.filter(PendingInteraction.id == interaction_id)
 
-    return query.order_by(PendingInteraction.created_at.desc()).first()
+    return (
+        query.with_for_update()
+        .order_by(PendingInteraction.created_at.desc())
+        .first()
+    )
 
 
 def create_pending_interaction(
@@ -115,4 +119,3 @@ def resolve_interaction(
 
     if commit:
         db.commit()
-

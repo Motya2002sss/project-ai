@@ -82,6 +82,7 @@ from app.services.task_service import (
     list_user_tasks,
     mark_tasks_done_by_titles,
 )
+from app.services.time_service import get_user_now
 from app.services.user_service import (
     format_user_profile,
     get_or_create_user_by_external_id,
@@ -222,6 +223,23 @@ def day_snapshot_to_response(
         if item.start_time is not None and item.status in {"planned", "done"}
     ]
     unscheduled_items = [item for item in plan.items if item not in scheduled_items]
+    completed_items = [item for item in plan.items if item.status == "done"]
+    current_item = None
+    current_time = get_user_now(user)
+
+    if day_plan.date == current_time.date():
+        current_clock = current_time.timetz().replace(tzinfo=None)
+        current_item = next(
+            (
+                item
+                for item in scheduled_items
+                if item.status == "planned"
+                and item.start_time is not None
+                and item.end_time is not None
+                and item.start_time <= current_clock < item.end_time
+            ),
+            None,
+        )
 
     return DaySnapshotResponse(
         date=day_plan.date,
@@ -229,6 +247,8 @@ def day_snapshot_to_response(
         progress=DayProgressResponse(done=done_count, total=len(tasks)),
         scheduled_items=scheduled_items,
         unscheduled_items=unscheduled_items,
+        completed_items=completed_items,
+        current_item=current_item,
         completed_count=done_count,
         total_count=len(tasks),
         day_context=DayContextResponse(

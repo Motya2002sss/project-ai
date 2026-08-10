@@ -4,7 +4,7 @@ This file is the project-level instruction set for Codex and other coding agents
 
 ## Product Meaning
 
-AI Life Planner is a Telegram-first MVP for an AI daily and life planner.
+AI Life Planner is an iOS-first AI daily and life planner. Android comes after the iOS version is validated. The existing Web and Telegram clients are frozen compatibility surfaces, not active product targets.
 
 The product is not a normal todo list and not a command-only Telegram bot. The user writes natural text, and the system turns that text into:
 
@@ -25,9 +25,10 @@ The repository already contains a working MVP foundation:
 - PostgreSQL through Docker Compose;
 - SQLAlchemy models;
 - Alembic migrations;
-- Telegram bot through aiogram;
-- minimal FastAPI Web API foundation;
-- minimal Today Web UI in `web/`;
+- frozen Telegram bot through aiogram;
+- frozen Web API compatibility foundation;
+- frozen Today Web UI in `web/`;
+- authenticated Mobile API v1 for local iOS dogfooding;
 - mock natural-language parser;
 - optional OpenAI/openai-compatible/Ollama parser integration with mock fallback;
 - shared message processing service for Telegram text, Web text, and future voice transcripts;
@@ -47,7 +48,7 @@ The repository already contains a working MVP foundation:
 - parser eval dataset at `tests/fixtures/parser_cases.json`;
 - Russian product, roadmap, UAT, and security documentation in the Obsidian vault at `docs/`.
 
-Treat these pieces as active product code. Preserve the existing MVP flows unless the user explicitly asks to change them.
+Treat FastAPI, PostgreSQL, the shared message pipeline, and the Planning Engine as the active product core and single source of truth. Preserve the frozen Web and Telegram flows, but do not extend them unless the user explicitly reactivates those surfaces.
 
 ## Required Product Context
 
@@ -57,6 +58,7 @@ Before starting a product or architecture task, read:
 docs/00 Главная.md
 docs/02 Дорожная карта/Сейчас — далее — позже.md
 docs/03 Решения/Журнал решений.md
+docs/07 Техническая документация/Mobile API Contract v1.md
 ```
 
 If a task changes product strategy, architecture, or the active roadmap stage, update the corresponding vault documents in the same commit.
@@ -65,15 +67,15 @@ Do not require documentation updates for every small CSS adjustment, isolated ty
 
 ## Architecture Rules
 
-- Bot and API layers must stay thin.
+- Mobile, bot, and API layers must stay thin.
 - Business logic belongs in `app/services/`.
 - Database state belongs in SQLAlchemy models and PostgreSQL.
 - Schema changes belong in Alembic migrations.
-- Telegram bot and Web API must use the same service layer where practical.
+- All clients must use the same backend contract and service layer; mobile must not implement parser, scheduler, or AI planning logic.
 - New text input channels must converge on the shared message processing pipeline.
 - Final schedule times must be calculated and overlap-checked by deterministic backend code.
 - Preserve valid fixed, completed, past, and existing flexible plan positions where possible.
-- Future voice/audio input should be converted to text first, then routed through the same parser and services.
+- Future voice/audio input must be converted to text first, then routed through the same parser and services without separate planning logic.
 - Important state must not live only inside chat history or LLM messages.
 - User-owned reads and writes must filter by user context, usually `user_id`.
 
@@ -155,14 +157,16 @@ Do not log secrets, raw `.env`, full database URLs with passwords, Authorization
 - Do not call `drop_all()` or `create_all()` in runtime application code.
 - Do not delete user data without explicit instruction.
 - Do not delete Docker volumes as a shortcut.
-- Keep multi-user isolation in mind for Telegram and future Web API flows.
+- Keep multi-user isolation in mind for Mobile API and all retained compatibility flows.
 
 ## Development Constraints
 
 - Do not rewrite the project from scratch.
 - Do not change the tech stack without explicit need.
 - Do not add dependencies casually.
-- Do not start Web UI work unless explicitly requested.
+- Do not develop the frozen Web or Telegram clients unless explicitly requested.
+- Do not create Android work before the iOS version is validated.
+- Do not move parser, scheduler, confirmation, conflict, or planning logic into a client.
 - Do not wire production LLM behavior unless explicitly requested.
 - Keep patches focused on the user's request.
 - Do not change code when the user asks for documentation-only work.

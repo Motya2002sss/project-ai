@@ -457,6 +457,7 @@ def set_task_status(
         .filter(
             Task.id == task_id,
             Task.user_id == user.id,
+            Task.status.in_(["planned", "done"]),
         )
         .one_or_none()
     )

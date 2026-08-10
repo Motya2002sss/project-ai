@@ -9,6 +9,8 @@ MessageSource = Literal[
     "telegram_text",
     "telegram_voice_transcript",
     "voice_transcript",
+    "ios_text",
+    "ios_voice_transcript",
 ]
 DateSelector = Literal["today", "tomorrow"]
 TaskStatus = Literal["planned", "done"]
@@ -186,6 +188,8 @@ class DaySnapshotResponse(BaseModel):
     progress: DayProgressResponse
     scheduled_items: list[PlanItemResponse] = Field(default_factory=list)
     unscheduled_items: list[PlanItemResponse] = Field(default_factory=list)
+    completed_items: list[PlanItemResponse] = Field(default_factory=list)
+    current_item: PlanItemResponse | None = None
     completed_count: int = Field(ge=0)
     total_count: int = Field(ge=0)
     day_context: DayContextResponse

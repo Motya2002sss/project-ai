@@ -1,6 +1,8 @@
 # AI Life Planner
 
-AI Life Planner is a Telegram-first MVP for an AI daily and life planner, with a minimal Today Web UI for local product testing.
+AI Life Planner is an iOS-first AI daily and life planner. FastAPI, PostgreSQL, and the Planning Engine are the single product brain. Android follows iOS validation; the existing Web and Telegram clients remain in the repository as frozen compatibility surfaces.
+
+Canonical product statement: **iOS-first. Android later. Web/Telegram frozen. Backend is the single product brain.**
 
 The product is not a plain todo list and not a command-only Telegram bot. The user writes normal human text about their schedule, energy, goals, tasks, and day results. The system turns that text into persistent profile data, long-term goals, dated tasks, a realistic day plan, and daily progress.
 
@@ -12,7 +14,7 @@ Core principle:
 
 ## Current MVP Status
 
-The MVP already includes a working Telegram bot flow, shared business services, database persistence, migrations, and smoke checks.
+The MVP already includes the shared backend core, authenticated Mobile API v1, database persistence, migrations, tests, and frozen compatibility clients.
 
 Implemented:
 
@@ -20,14 +22,14 @@ Implemented:
 - PostgreSQL through Docker Compose;
 - SQLAlchemy database models;
 - Alembic migrations;
-- Telegram bot through aiogram;
+- frozen Telegram bot through aiogram;
 - mock natural-language parser;
 - optional OpenAI/openai-compatible/Ollama LLM parser;
 - automatic fallback to mock parser when LLM is unavailable or invalid;
-- shared message processing service for Telegram text, Web text, and future voice transcripts;
-- minimal FastAPI Web API foundation;
-- minimal Today Web UI in `web/`;
-- Today progress and task completion through Web UI checkboxes;
+- shared message processing service for iOS text, frozen compatibility text, and future voice transcripts;
+- authenticated Mobile API v1 for iOS dogfooding;
+- frozen FastAPI Web compatibility API;
+- frozen Today Web UI in `web/`;
 - user profile storage;
 - long-term goals;
 - tasks;
@@ -46,7 +48,7 @@ Implemented:
 - honest unscheduled reasons and clarification for unresolved conflicts;
 - factual plan diff returned by the shared message pipeline;
 - atomic `DaySnapshot` returned by message processing, without a post-submit GET waterfall;
-- persistent clarification, confirmation, and fixed-conflict interactions shared by Web and Telegram;
+- persistent clarification, confirmation, and fixed-conflict interactions shared by every channel;
 - request idempotency and plan version checks for safe retries and stale proposals;
 - limited routines with `daily`, `weekdays`, and `selected_weekdays` cadence and lazy idempotent occurrences;
 - completed tasks retained in their original timeline position as day history;
@@ -58,13 +60,13 @@ Implemented:
 Not ready yet:
 
 - production LLM provider selection and ongoing prompt tuning;
-- full multi-screen Web UI;
-- production authentication;
+- the native iOS client itself;
+- TestFlight multi-user authentication;
 - production deployment;
-- full production Web API surface for all future Web UI workflows;
+- Week, Path, Profile mutation, Voice/STT, and general Undo mobile contracts;
 - advanced recurrence editing, exceptions, and calendar synchronization.
 
-FastAPI currently provides `/health` and a minimal `/api` foundation used by the Today Web UI. The primary MVP interface is still Telegram, and both Telegram and API flows converge on the same parser, service, and planner layers.
+FastAPI currently provides `/health`, frozen `/api` Web compatibility endpoints, and an authenticated `/api/v1` contract for the first iOS vertical slice. Every channel converges on the same parser, service, and planner layers.
 
 Planning is split deliberately: the parser or LLM extracts operations and constraints, while the backend calculates timezone-aware availability, resolves user-owned tasks, prevents overlaps, persists changes atomically, and produces the factual diff. The LLM never chooses or writes the final schedule directly.
 
@@ -127,6 +129,9 @@ POSTGRES_PASSWORD=<local-password>
 DATABASE_URL=postgresql+psycopg://<user>:<password>@localhost:5432/<database>
 
 TELEGRAM_BOT_TOKEN=
+
+MOBILE_DOGFOOD_TOKEN=<local-secret>
+MOBILE_DOGFOOD_USER_EXTERNAL_ID=mobile:dogfood
 
 PLAN_START_BUFFER_MINUTES=30
 DEFAULT_PLAN_START_TIME=18:30
@@ -296,7 +301,34 @@ Expected response:
 }
 ```
 
-### 6. Use The Web API Foundation
+### 6. Use Mobile API v1
+
+Mobile API v1 is the active client contract for local iOS dogfooding. Configure `MOBILE_DOGFOOD_TOKEN` in `.env`, send it as a bearer token, and never send a user id from the client.
+
+```text
+GET   /api/v1/today
+POST  /api/v1/capture
+POST  /api/v1/interactions/{interaction_id}/responses
+PATCH /api/v1/tasks/{task_id}/status
+```
+
+Capture example:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/capture \
+  -H "Authorization: Bearer $MOBILE_DOGFOOD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "request_id": "ios-capture-1",
+    "text": "Сегодня задержусь на работе до 20"
+  }'
+```
+
+Capture and interaction responses contain one status, one factual `plan_diff`, and one consistent `day_snapshot`. Task status mutations return the changed task, diff, and rebuilt snapshot in the same response. See [Mobile API Contract v1](docs/07%20Техническая%20документация/Mobile%20API%20Contract%20v1.md).
+
+The bearer token is deliberately limited to one local dogfood identity. It is not TestFlight or production authentication.
+
+### 7. Frozen Web API Foundation
 
 The MVP API is intentionally small. It powers the local Today Web UI and prepares the backend for future voice input without adding production auth yet.
 
@@ -360,9 +392,9 @@ http://localhost:5173
 http://127.0.0.1:5173
 ```
 
-### 7. Run The Today Web UI
+### 8. Run The Frozen Today Web UI
 
-The first Web UI is a minimal Today screen. It sends free text to `POST /api/message` with a unique `request_id` and applies the returned `day_snapshot` atomically. It does not issue a plan/tasks/goals GET waterfall after submit. The composer supports persistent clarification, confirmation, conflict, timeout, retry, and draft preservation states. Today task checkboxes can switch between `planned` and `done` through the status endpoint. Scheduled times, unscheduled reasons, conflict messages, and plan changes come from backend services rather than frontend guesses.
+The retained Web UI is frozen. It remains useful for compatibility checks but is not an active product surface.
 
 Start the backend first:
 
@@ -394,7 +426,7 @@ The Web UI stores `User ID` in `localStorage` and defaults to `web-demo-user`. T
 
 Production auth, payments, deployment, a full calendar, and a full multi-screen Web UI are not implemented.
 
-### 8. Run Telegram Bot
+### 9. Run The Frozen Telegram Bot
 
 Set `TELEGRAM_BOT_TOKEN` in `.env`, then run:
 
@@ -468,6 +500,7 @@ npm run build
 
 - [00 Главная](docs/00%20Главная.md)
 - [Текущая дорожная карта](docs/02%20Дорожная%20карта/Сейчас%20—%20далее%20—%20позже.md)
+- [Mobile API Contract v1](docs/07%20Техническая%20документация/Mobile%20API%20Contract%20v1.md)
 
 ## Security Notes
 
@@ -481,7 +514,8 @@ npm run build
 
 ## Development Principles
 
-- Telegram bot and future API endpoints should stay thin.
+- Mobile and compatibility endpoints must stay thin.
+- Mobile stores only cache and drafts; backend owns all product state and calculations.
 - Business logic belongs in `app/services/`.
 - Parser or LLM extracts structured meaning; backend validates and stores.
 - LLM output is untrusted input; deterministic backend code calculates all displayed times and rejects overlaps.

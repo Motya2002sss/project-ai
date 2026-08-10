@@ -19,6 +19,9 @@ class Settings(BaseSettings):
 
     telegram_bot_token: str | None = None
 
+    mobile_dogfood_token: str | None = None
+    mobile_dogfood_user_external_id: str = "mobile:dogfood"
+
     plan_start_buffer_minutes: int = 30
     default_plan_start_time: str = "18:30"
     message_request_timeout_seconds: float = 15.0
