@@ -130,6 +130,7 @@ git commit -m "Add production identities and sessions"
 - Create: `app/auth/tokens.py`
 - Create: `app/services/auth_service.py`
 - Create: `app/schemas/auth.py`
+- Create: `migrations/versions/a2b1c3d4e5f6_auth_challenges.py`
 - Test: `tests/test_auth_service.py`
 - Modify: `requirements.txt`
 
@@ -229,7 +230,7 @@ Expected: FAIL on missing resource budget and preview service.
 
 - [ ] **Step 3: Implement preview-first onboarding**
 
-Persist structured summary and budget, not raw narration beyond the explicitly documented short-lived preview retention. Migration `a8e7f6d5c4b3` follows `a1f0c9e2d311`. `POST /preview` returns routine/goal/allocation candidates; `POST /apply` creates profile updates and goals atomically. Allocation minutes must sum to at most configured allocatable capacity.
+Persist structured summary and budget, not raw narration beyond the explicitly documented short-lived preview retention. Migration `a8e7f6d5c4b3` follows auth-challenge revision `a2b1c3d4e5f6`. `POST /preview` returns routine/goal/allocation candidates; `POST /apply` creates profile updates and goals atomically. Allocation minutes must sum to at most configured allocatable capacity.
 
 - [ ] **Step 4: Run onboarding and planner regression tests**
 

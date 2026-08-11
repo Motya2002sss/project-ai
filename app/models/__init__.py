@@ -1,4 +1,4 @@
-from app.models.auth import AppSession, AuthIdentity
+from app.models.auth import AppSession, AuthChallenge, AuthIdentity
 from app.models.day_plan import DayPlan
 from app.models.goal import Goal
 from app.models.interaction import PendingInteraction
@@ -19,4 +19,5 @@ __all__ = [
     "Routine",
     "AuthIdentity",
     "AppSession",
+    "AuthChallenge",
 ]

@@ -10,3 +10,4 @@ httpx==0.28.1
 pytest==8.3.4
 aiogram>=3,<4
 openai>=1.59,<2
+PyJWT[crypto]==2.10.1
