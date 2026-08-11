@@ -46,3 +46,12 @@ class User(Base):
     app_sessions = relationship(
         "AppSession", back_populates="user", cascade="all, delete-orphan"
     )
+    resource_budget = relationship(
+        "ResourceBudget",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    onboarding_previews = relationship(
+        "OnboardingPreview", back_populates="user", cascade="all, delete-orphan"
+    )

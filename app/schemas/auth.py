@@ -84,3 +84,5 @@ class AccountExportResponse(BaseModel):
     goals: list[dict]
     tasks: list[dict]
     routines: list[dict]
+    resource_budget: dict | None
+    onboarding_previews: list[dict]
