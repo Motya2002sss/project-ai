@@ -328,6 +328,14 @@ Capture and interaction responses contain one status, one factual `plan_diff`, a
 
 The bearer token is deliberately limited to one local dogfood identity. It is not TestFlight or production authentication.
 
+### 6.1 Production identity foundation (API v2)
+
+The production-safe boundary is implemented locally under `/api/v2`: Apple identity-token verification, one-use state/nonce challenges, hashed rotating device sessions, authenticated account export/deletion, and preview-first onboarding. Client-supplied user identity is rejected.
+
+Native mobile stores access/refresh credentials in SecureStore and namespaces cache/drafts by the authenticated public user UUID. The legacy v1 cache can migrate only into the local `dogfood` namespace.
+
+This foundation has automated local coverage, but is not yet a public login: real Apple release credentials, authorization-code exchange/revocation, staging and TestFlight verification remain required. See [Authentication and Account Lifecycle v1](docs/07%20Техническая%20документация/Authentication%20and%20Account%20Lifecycle%20v1.md).
+
 ### 7. Frozen Web API Foundation
 
 The MVP API is intentionally small. It powers the local Today Web UI and prepares the backend for future voice input without adding production auth yet.
@@ -501,6 +509,7 @@ npm run build
 - [00 Главная](docs/00%20Главная.md)
 - [Текущая дорожная карта](docs/02%20Дорожная%20карта/Сейчас%20—%20далее%20—%20позже.md)
 - [Mobile API Contract v1](docs/07%20Техническая%20документация/Mobile%20API%20Contract%20v1.md)
+- [Authentication and Account Lifecycle v1](docs/07%20Техническая%20документация/Authentication%20and%20Account%20Lifecycle%20v1.md)
 
 ## Security Notes
 
@@ -520,4 +529,4 @@ npm run build
 - Parser or LLM extracts structured meaning; backend validates and stores.
 - LLM output is untrusted input; deterministic backend code calculates all displayed times and rejects overlaps.
 - The planner must stay universal and must not be hardcoded around one user's schedule, goals, or tasks.
-- Keep the mock parser as a fallback when real LLM support is added.
+- Mock/deterministic parsing is allowed only in local/test. Staging/production AI failures must be typed and recoverable, never presented as successful real AI work.
