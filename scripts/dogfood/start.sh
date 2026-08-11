@@ -32,7 +32,7 @@ if test "$#" -gt 0; then
   exit 2
 fi
 
-for dogfood_command in curl lsof pgrep ps; do
+for dogfood_command in cksum curl lsof pgrep ps; do
   if ! command -v "$dogfood_command" >/dev/null 2>&1; then
     echo "Не найдена обязательная команда: $dogfood_command" >&2
     exit 1
@@ -42,7 +42,8 @@ done
 dogfood_owned_pids=()
 dogfood_owned_files=()
 dogfood_cleanup_done=0
-dogfood_runtime_dir="${DOGFOOD_RUNTIME_DIR:-${TMPDIR:-/tmp}/ai-life-planner-dogfood}"
+dogfood_root_key="$(printf '%s' "$dogfood_root" | cksum | awk '{print $1}')"
+dogfood_runtime_dir="${DOGFOOD_RUNTIME_DIR:-${TMPDIR:-/tmp}/ai-life-planner-dogfood-${dogfood_root_key}}"
 dogfood_supervisor_file="$dogfood_runtime_dir/supervisor"
 
 dogfood_cleanup() {
@@ -93,6 +94,7 @@ dogfood_recover_previous_stack() {
   local dogfood_previous_pid
   local dogfood_recorded_start
   local dogfood_recorded_command
+  local dogfood_recorded_root
   local dogfood_actual_start
   local dogfood_actual_command
   local dogfood_previous_state
@@ -102,10 +104,12 @@ dogfood_recover_previous_stack() {
   dogfood_previous_pid="$(sed -n '1p' "$dogfood_supervisor_file")"
   dogfood_recorded_start="$(sed -n '2p' "$dogfood_supervisor_file")"
   dogfood_recorded_command="$(sed -n '3p' "$dogfood_supervisor_file")"
+  dogfood_recorded_root="$(sed -n '4p' "$dogfood_supervisor_file")"
 
   if [[ ! "$dogfood_previous_pid" =~ ^[0-9]+$ ]] || \
     test -z "$dogfood_recorded_start" || \
-    test -z "$dogfood_recorded_command"; then
+    test -z "$dogfood_recorded_command" || \
+    test -z "$dogfood_recorded_root"; then
     rm -f "$dogfood_supervisor_file"
     return 0
   fi
@@ -121,6 +125,12 @@ dogfood_recover_previous_stack() {
     test "$dogfood_actual_command" != "$dogfood_recorded_command"; then
     rm -f "$dogfood_supervisor_file"
     return 0
+  fi
+
+  if test "$dogfood_recorded_root" != "$dogfood_root"; then
+    echo "Dogfood runtime принадлежит другому проекту: ${dogfood_recorded_root}" >&2
+    echo "Не останавливаю его процессы. Задайте отдельный DOGFOOD_RUNTIME_DIR и повторите." >&2
+    return 1
   fi
 
   echo "Перезапускаю предыдущий dogfood stack…"
@@ -167,10 +177,11 @@ if test -z "$dogfood_current_start" || test -z "$dogfood_current_command"; then
 fi
 (
   umask 077
-  printf '%s\n%s\n%s\n' \
+  printf '%s\n%s\n%s\n%s\n' \
     "$$" \
     "$dogfood_current_start" \
-    "$dogfood_current_command" >"$dogfood_supervisor_file"
+    "$dogfood_current_command" \
+    "$dogfood_root" >"$dogfood_supervisor_file"
 )
 dogfood_owned_files+=("$dogfood_supervisor_file")
 

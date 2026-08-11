@@ -791,3 +791,76 @@ def test_single_terminal_launcher_restarts_its_recorded_previous_stack(
         if first.poll() is None:
             os.killpg(first.pid, signal.SIGTERM)
             first.wait(timeout=2)
+
+
+def test_launcher_does_not_recover_stack_when_project_runtime_keys_collide(
+    tmp_path: Path,
+):
+    first_area = tmp_path / "first"
+    second_area = tmp_path / "second"
+    shared_tmp = tmp_path / "shared-tmp"
+    first_area.mkdir()
+    second_area.mkdir()
+    shared_tmp.mkdir()
+    first_launcher, first_environment, first_events = prepare_fake_supervisor_stack(
+        first_area
+    )
+    second_launcher, second_environment, _second_events = prepare_fake_supervisor_stack(
+        second_area
+    )
+    first_environment["TMPDIR"] = str(shared_tmp)
+    second_environment["TMPDIR"] = str(shared_tmp)
+    for environment in (first_environment, second_environment):
+        fake_bin = Path(environment["PATH"].split(":", 1)[0])
+        fake_cksum = fake_bin / "cksum"
+        fake_cksum.write_text(
+            "#!/usr/bin/env bash\nprintf '%s\\n' '12345 99'\n",
+            encoding="utf-8",
+        )
+        fake_cksum.chmod(0o755)
+    first_mobile = first_launcher.parent / "start-mobile.sh"
+    first_mobile.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "trap 'echo mobile-stopped >>\"$DOGFOOD_EVENTS_FILE\"; exit 0' TERM INT\n"
+        "echo mobile-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+        "while :; do sleep 0.05; done\n",
+        encoding="utf-8",
+    )
+
+    first = subprocess.Popen(
+        [first_launcher],
+        env=first_environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        for _ in range(100):
+            if first_events.exists() and "mobile-start" in first_events.read_text(
+                encoding="utf-8"
+            ):
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError("first project stack did not start")
+
+        second = subprocess.run(
+            [second_launcher],
+            check=False,
+            capture_output=True,
+            env=second_environment,
+            text=True,
+            timeout=5,
+        )
+
+        assert second.returncode != 0
+        assert "Перезапускаю предыдущий dogfood stack" not in second.stdout
+        assert "другому проекту" in second.stderr
+        assert first.poll() is None
+        assert "mobile-stopped" not in first_events.read_text(encoding="utf-8")
+    finally:
+        if first.poll() is None:
+            os.killpg(first.pid, signal.SIGTERM)
+            first.wait(timeout=2)
