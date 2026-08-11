@@ -20,7 +20,7 @@ if ! dogfood_write_mobile_env "$dogfood_tunnel_url" "$dogfood_root/mobile/.env.l
   exit 1
 fi
 
-if ! curl --silent --fail --max-time 10 "$dogfood_tunnel_url/health" >/dev/null; then
+if ! dogfood_wait_for_health "$dogfood_tunnel_url/health" 6 1; then
   echo "The configured HTTPS backend is not healthy. Restart the Quick Tunnel." >&2
   exit 1
 fi

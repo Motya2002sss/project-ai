@@ -15,9 +15,9 @@ interface ProfileState {
 }
 
 function backendAccessDetail(state: ProfileState): string {
-  if (!state.apiConfigured) return 'Настроить backend';
+  if (!state.apiConfigured) return 'Настроить подключение';
   if (state.hasAuthoritativeToday && !state.hasTodayError) {
-    return 'Backend подключён';
+    return 'Подключение настроено';
   }
   return 'Проверить подключение';
 }

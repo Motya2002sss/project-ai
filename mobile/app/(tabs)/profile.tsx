@@ -45,11 +45,13 @@ export default function ProfileRoute() {
 
         <View style={styles.identity}>
           <View accessibilityElementsHidden style={styles.avatar}>
-            <Text style={styles.avatarText}>Л</Text>
+            <Text style={styles.avatarText}>—</Text>
           </View>
           <View style={styles.identityCopy}>
-            <Text style={styles.identityTitle}>Локальный профиль</Text>
-            <Text style={styles.identityDetail}>Dogfooding на этом устройстве</Text>
+            <Text style={styles.identityTitle}>Профиль пока не настроен</Text>
+            <Text style={styles.identityDetail}>
+              Личные данные появятся здесь после настройки
+            </Text>
           </View>
         </View>
 

@@ -19,7 +19,10 @@ import { radius } from '../../theme/radius';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { InteractionSheet } from '../interactions/InteractionSheet';
-import type { CaptureState } from '../planner/plannerReducer';
+import type {
+  CaptureState,
+  InteractionCaptureState,
+} from '../planner/plannerReducer';
 
 interface CaptureSheetProps {
   capture: CaptureState;
@@ -32,7 +35,21 @@ interface CaptureSheetProps {
   onRespond: (interactionId: string, optionId?: string, text?: string) => void;
 }
 
-const interactionStates = new Set(['clarification', 'confirmation', 'conflict']);
+function directInteraction(
+  capture: CaptureState,
+): InteractionCaptureState | null {
+  if (
+    capture.status === 'clarification' ||
+    capture.status === 'confirmation' ||
+    capture.status === 'conflict'
+  ) {
+    return capture;
+  }
+  if (capture.status === 'submitting' || capture.status === 'error') {
+    return capture.interaction ?? null;
+  }
+  return null;
+}
 
 export function CaptureSheet({
   capture,
@@ -49,12 +66,7 @@ export function CaptureSheet({
   const visible = !['idle', 'success'].includes(capture.status);
   const submitting = capture.status === 'submitting';
   const error = capture.status === 'error' ? capture : null;
-  const interaction = interactionStates.has(capture.status)
-    ? (capture as Extract<
-        CaptureState,
-        { status: 'clarification' | 'confirmation' | 'conflict' }
-      >)
-    : null;
+  const interaction = directInteraction(capture);
 
   const handleClose = () => {
     if (!submitting) onClose();
@@ -85,10 +97,13 @@ export function CaptureSheet({
           >
             {interaction ? (
               <InteractionSheet
+                busy={submitting}
                 capture={interaction}
+                errorMessage={error?.message ?? null}
                 snapshot={snapshot}
-                onClose={onClose}
+                onClose={handleClose}
                 onRespond={onRespond}
+                onRetry={error?.retryable ? onRetry : undefined}
               />
             ) : (
               <>

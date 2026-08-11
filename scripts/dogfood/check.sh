@@ -27,12 +27,27 @@ if ! dogfood_write_curl_auth_config "$dogfood_token" "$dogfood_auth_config"; the
 fi
 unset dogfood_token
 dogfood_curl_timeout=(--connect-timeout 5 --max-time 20)
+dogfood_curl_resolve=()
+dogfood_dns_probe_status=0
+curl --silent --show-error --connect-timeout 5 --max-time 5 \
+  "$dogfood_tunnel_url/health" >/dev/null 2>&1 || dogfood_dns_probe_status=$?
+if test "$dogfood_dns_probe_status" -eq 6; then
+  dogfood_resolve_target="$(dogfood_quick_tunnel_resolve_target "$dogfood_tunnel_url" || true)"
+  if test -z "$dogfood_resolve_target"; then
+    echo "Quick Tunnel hostname is not resolvable." >&2
+    exit 1
+  fi
+  dogfood_curl_resolve=(--resolve "$dogfood_resolve_target")
+elif test "$dogfood_dns_probe_status" -ne 0; then
+  echo "Quick Tunnel DNS probe failed (curl code $dogfood_dns_probe_status)." >&2
+  exit "$dogfood_dns_probe_status"
+fi
 
-dogfood_health_code="$(curl "${dogfood_curl_timeout[@]}" --silent --show-error --output "$dogfood_check_dir/health.json" --write-out '%{http_code}' "$dogfood_tunnel_url/health")"
-dogfood_today_code="$(curl "${dogfood_curl_timeout[@]}" --silent --show-error --output "$dogfood_check_dir/today.json" --write-out '%{http_code}' --config "$dogfood_auth_config" "$dogfood_tunnel_url/api/v1/today")"
-dogfood_missing_code="$(curl "${dogfood_curl_timeout[@]}" --silent --show-error --output /dev/null --write-out '%{http_code}' "$dogfood_tunnel_url/api/v1/today")"
-dogfood_invalid_code="$(curl "${dogfood_curl_timeout[@]}" --silent --show-error --output /dev/null --write-out '%{http_code}' -H 'Authorization: Bearer intentionally-invalid' "$dogfood_tunnel_url/api/v1/today")"
-dogfood_isolation_code="$(curl "${dogfood_curl_timeout[@]}" --silent --show-error --output /dev/null --write-out '%{http_code}' \
+dogfood_health_code="$(curl "${dogfood_curl_timeout[@]}" "${dogfood_curl_resolve[@]}" --silent --show-error --output "$dogfood_check_dir/health.json" --write-out '%{http_code}' "$dogfood_tunnel_url/health")"
+dogfood_today_code="$(curl "${dogfood_curl_timeout[@]}" "${dogfood_curl_resolve[@]}" --silent --show-error --output "$dogfood_check_dir/today.json" --write-out '%{http_code}' --config "$dogfood_auth_config" "$dogfood_tunnel_url/api/v1/today")"
+dogfood_missing_code="$(curl "${dogfood_curl_timeout[@]}" "${dogfood_curl_resolve[@]}" --silent --show-error --output /dev/null --write-out '%{http_code}' "$dogfood_tunnel_url/api/v1/today")"
+dogfood_invalid_code="$(curl "${dogfood_curl_timeout[@]}" "${dogfood_curl_resolve[@]}" --silent --show-error --output /dev/null --write-out '%{http_code}' -H 'Authorization: Bearer intentionally-invalid' "$dogfood_tunnel_url/api/v1/today")"
+dogfood_isolation_code="$(curl "${dogfood_curl_timeout[@]}" "${dogfood_curl_resolve[@]}" --silent --show-error --output /dev/null --write-out '%{http_code}' \
   --config "$dogfood_auth_config" \
   -H 'Content-Type: application/json' \
   --data '{"request_id":"dogfood-script-isolation-check","text":"Проверка изоляции","user_external_id":"somebody-else"}' \

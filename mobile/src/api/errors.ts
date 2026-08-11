@@ -34,7 +34,7 @@ export function toPresentationError(error: unknown): PresentationError {
   switch (error.kind) {
     case 'configuration':
       return {
-        message: 'Подключите локальный backend для dogfooding.',
+        message: 'Доступ к плану не настроен.',
         retryable: false,
       };
     case 'authentication':

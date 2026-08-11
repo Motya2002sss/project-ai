@@ -16,6 +16,7 @@ import { PlanDiffNotice } from '../capture/PlanDiffNotice';
 import { ProcessingNotice } from '../capture/ProcessingNotice';
 import { usePlanner } from '../planner/PlannerProvider';
 import { mapDaySnapshot } from './todayMapper';
+import { shouldOfferTodaySetup } from './todaySetupModel';
 import { Timeline } from './components/Timeline';
 import { TodayHeader } from './components/TodayHeader';
 import {
@@ -54,9 +55,10 @@ export function TodayScreen() {
   );
   const gutter = width <= 375 ? spacing.screenNarrow : spacing.screen;
   const capture = state.capture;
-  const needsSetup =
-    !apiBaseUrl ||
-    state.today.error?.message.includes('Подключите локальный backend');
+  const needsSetup = shouldOfferTodaySetup(
+    apiBaseUrl,
+    state.today.error?.message ?? null,
+  );
 
   return (
     <SafeAreaView edges={['top']} style={styles.safeArea}>
@@ -164,7 +166,6 @@ const styles = StyleSheet.create({
   },
   setupText: { ...typography.bodyMedium, color: colors.burgundy },
   captureArea: {
-    alignItems: 'flex-end',
     paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -176,7 +177,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    paddingHorizontal: 13,
+    paddingHorizontal: spacing.sm,
     borderWidth: 1,
     borderColor: colors.rule,
     borderRadius: radius.control,

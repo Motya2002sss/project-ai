@@ -6,6 +6,7 @@ import {
   plannerReducer,
   retryDescriptor,
   type PlannerAction,
+  type PlannerState,
 } from '../plannerReducer';
 
 const snapshot = {
@@ -45,6 +46,23 @@ const snapshot = {
 function reduce(action: PlannerAction) {
   return plannerReducer(initialPlannerState, action);
 }
+
+const clarificationState: PlannerState = {
+  ...initialPlannerState,
+  draft: 'добавь бжу чтобы я считал',
+  capture: {
+    status: 'clarification',
+    value: {
+      id: 'clarification-1',
+      question: 'Что именно добавить?',
+      options: [
+        { id: 'daily', label: 'Калории и БЖУ за день', value: 'за день' },
+      ],
+      free_text_allowed: true,
+      expires_at: '2026-08-10T20:00:00Z',
+    },
+  },
+};
 
 describe('plannerReducer capture lifecycle', () => {
   it('starts exactly one capture submit while a request is active', () => {
@@ -191,6 +209,98 @@ describe('plannerReducer capture lifecycle', () => {
       requestId: 'cancel-1',
       operation,
       explicitCancel: true,
+    });
+  });
+
+  it('keeps the interaction prompt when an answer request fails', () => {
+    const submitting = plannerReducer(clarificationState, {
+      type: 'capture/requestStarted',
+      requestId: 'answer-1',
+      operation: {
+        kind: 'interaction',
+        interactionId: 'clarification-1',
+        optionId: 'daily',
+        text: 'за день',
+      },
+    });
+
+    const failed = plannerReducer(submitting, {
+      type: 'capture/requestFailed',
+      requestId: 'answer-1',
+      message: 'Не удалось отправить ответ.',
+      retryable: true,
+    });
+
+    expect(failed.capture).toMatchObject({
+      status: 'error',
+      interaction: clarificationState.capture,
+    });
+  });
+
+  it('keeps the retained interaction prompt when retry starts', () => {
+    const operation = {
+      kind: 'interaction' as const,
+      interactionId: 'clarification-1',
+      optionId: 'daily',
+      text: 'за день',
+    };
+    const submitting = plannerReducer(clarificationState, {
+      type: 'capture/requestStarted',
+      requestId: 'answer-1',
+      operation,
+    });
+    const failed = plannerReducer(submitting, {
+      type: 'capture/requestFailed',
+      requestId: 'answer-1',
+      message: 'Не удалось отправить ответ.',
+      retryable: true,
+    });
+
+    const retrying = plannerReducer(failed, {
+      type: 'capture/requestStarted',
+      requestId: 'answer-1',
+      operation,
+    });
+
+    expect(retrying.capture).toMatchObject({
+      status: 'submitting',
+      interaction: clarificationState.capture,
+    });
+  });
+
+  it('keeps the interaction prompt when the backend rejects an answer', () => {
+    const submitting = plannerReducer(clarificationState, {
+      type: 'capture/requestStarted',
+      requestId: 'answer-1',
+      operation: {
+        kind: 'interaction',
+        interactionId: 'clarification-1',
+        optionId: 'daily',
+        text: 'за день',
+      },
+    });
+
+    const failed = plannerReducer(submitting, {
+      type: 'capture/responseReceived',
+      requestId: 'answer-1',
+      explicitCancel: false,
+      response: {
+        request_id: 'answer-1',
+        status: 'failed',
+        reason: null,
+        reply_text: 'Не удалось применить ответ.',
+        retryable: true,
+        plan_diff: {},
+        clarification: null,
+        confirmation: null,
+        conflict: null,
+        day_snapshot: snapshot,
+      },
+    });
+
+    expect(failed.capture).toMatchObject({
+      status: 'error',
+      interaction: clarificationState.capture,
     });
   });
 

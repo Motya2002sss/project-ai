@@ -28,6 +28,14 @@ describe('buildProfileRows', () => {
     ).toEqual(['/path', '/setup']);
   });
 
+  it('describes a healthy connection without development terminology', () => {
+    const rows = buildProfileRows(connectedState);
+
+    expect(rows.find((row) => row.id === 'access')?.detail).toBe(
+      'Подключение настроено',
+    );
+  });
+
   it('does not claim backend connection while Today has an error', () => {
     const rows = buildProfileRows({
       apiConfigured: true,

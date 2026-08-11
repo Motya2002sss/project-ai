@@ -140,6 +140,15 @@ describe('toPresentationError', () => {
     });
   });
 
+  it('uses product copy for missing local configuration', () => {
+    const error = new ApiError('configuration', false);
+
+    expect(toPresentationError(error)).toEqual({
+      message: 'Доступ к плану не настроен.',
+      retryable: false,
+    });
+  });
+
   it('uses operation-specific recovery copy', () => {
     const network = new ApiError('network', true);
     const timeout = new ApiError('timeout', true);

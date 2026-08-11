@@ -39,24 +39,11 @@ for dogfood_command in curl lsof pgrep ps; do
   fi
 done
 
-if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Порт 8000 уже занят. Остановите старый FastAPI через Ctrl+C и повторите." >&2
-  exit 1
-fi
-
-if pgrep -f 'cloudflared.*tunnel.*127\.0\.0\.1:8000' >/dev/null 2>&1; then
-  echo "Quick Tunnel уже запущен. Остановите его старое окно через Ctrl+C и повторите." >&2
-  exit 1
-fi
-
-if lsof -nP -iTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Порт 8081 уже занят Expo. Остановите старое окно Expo через Ctrl+C и повторите." >&2
-  exit 1
-fi
-
 dogfood_owned_pids=()
 dogfood_owned_files=()
 dogfood_cleanup_done=0
+dogfood_runtime_dir="${DOGFOOD_RUNTIME_DIR:-${TMPDIR:-/tmp}/ai-life-planner-dogfood}"
+dogfood_supervisor_file="$dogfood_runtime_dir/supervisor"
 
 dogfood_cleanup() {
   local dogfood_status="$1"
@@ -71,9 +58,11 @@ dogfood_cleanup() {
   if test "${#dogfood_owned_pids[@]}" -gt 0; then
     echo
     echo "Останавливаю dogfood stack…"
-    for dogfood_pid in "${dogfood_owned_pids[@]}"; do
+    for ((dogfood_index = ${#dogfood_owned_pids[@]} - 1; dogfood_index >= 0; dogfood_index -= 1)); do
+      dogfood_pid="${dogfood_owned_pids[$dogfood_index]}"
       if kill -0 "$dogfood_pid" 2>/dev/null; then
         kill -TERM "$dogfood_pid" 2>/dev/null || true
+        kill -CONT "$dogfood_pid" 2>/dev/null || true
       fi
     done
     for dogfood_pid in "${dogfood_owned_pids[@]}"; do
@@ -91,6 +80,114 @@ dogfood_cleanup() {
 
 trap 'dogfood_cleanup $?' EXIT
 trap 'dogfood_cleanup 130' INT TERM
+
+dogfood_process_start_marker() {
+  ps -p "$1" -o lstart= 2>/dev/null | awk '{$1=$1; print}'
+}
+
+dogfood_process_command() {
+  ps -p "$1" -o command= 2>/dev/null
+}
+
+dogfood_recover_previous_stack() {
+  local dogfood_previous_pid
+  local dogfood_recorded_start
+  local dogfood_recorded_command
+  local dogfood_actual_start
+  local dogfood_actual_command
+  local dogfood_previous_state
+  local dogfood_attempt
+
+  test -f "$dogfood_supervisor_file" || return 0
+  dogfood_previous_pid="$(sed -n '1p' "$dogfood_supervisor_file")"
+  dogfood_recorded_start="$(sed -n '2p' "$dogfood_supervisor_file")"
+  dogfood_recorded_command="$(sed -n '3p' "$dogfood_supervisor_file")"
+
+  if [[ ! "$dogfood_previous_pid" =~ ^[0-9]+$ ]] || \
+    test -z "$dogfood_recorded_start" || \
+    test -z "$dogfood_recorded_command"; then
+    rm -f "$dogfood_supervisor_file"
+    return 0
+  fi
+
+  if ! kill -0 "$dogfood_previous_pid" 2>/dev/null; then
+    rm -f "$dogfood_supervisor_file"
+    return 0
+  fi
+
+  dogfood_actual_start="$(dogfood_process_start_marker "$dogfood_previous_pid")"
+  dogfood_actual_command="$(dogfood_process_command "$dogfood_previous_pid")"
+  if test "$dogfood_actual_start" != "$dogfood_recorded_start" || \
+    test "$dogfood_actual_command" != "$dogfood_recorded_command"; then
+    rm -f "$dogfood_supervisor_file"
+    return 0
+  fi
+
+  echo "Перезапускаю предыдущий dogfood stack…"
+  kill -TERM "$dogfood_previous_pid" 2>/dev/null || true
+  kill -CONT "$dogfood_previous_pid" 2>/dev/null || true
+  for ((dogfood_attempt = 1; dogfood_attempt <= 100; dogfood_attempt += 1)); do
+    if ! kill -0 "$dogfood_previous_pid" 2>/dev/null; then
+      rm -f "$dogfood_supervisor_file"
+      return 0
+    fi
+    dogfood_previous_state="$(ps -p "$dogfood_previous_pid" -o state= 2>/dev/null || true)"
+    if [[ "$dogfood_previous_state" == *Z* ]]; then
+      rm -f "$dogfood_supervisor_file"
+      return 0
+    fi
+    sleep 0.05
+  done
+
+  echo "Предыдущий dogfood stack не остановился. Нажмите Ctrl+C в его окне и повторите." >&2
+  return 1
+}
+
+if command -v scutil >/dev/null 2>&1; then
+  dogfood_vpn_name="$(scutil --nc list 2>/dev/null | dogfood_connected_vpn_name || true)"
+  if test -n "$dogfood_vpn_name"; then
+    if test "${DOGFOOD_ALLOW_VPN:-0}" != "1"; then
+      echo "Активен VPN «${dogfood_vpn_name}». Выключите VPN на Mac и iPhone и запустите команду снова." >&2
+      echo "Для осознанного запуска с VPN: DOGFOOD_ALLOW_VPN=1 ./scripts/dogfood/start.sh" >&2
+      exit 1
+    fi
+    echo "VPN разрешён явно через DOGFOOD_ALLOW_VPN=1: «${dogfood_vpn_name}»."
+  fi
+fi
+
+mkdir -p "$dogfood_runtime_dir"
+chmod 700 "$dogfood_runtime_dir"
+dogfood_recover_previous_stack
+
+dogfood_current_start="$(dogfood_process_start_marker "$$")"
+dogfood_current_command="$(dogfood_process_command "$$")"
+if test -z "$dogfood_current_start" || test -z "$dogfood_current_command"; then
+  echo "Не удалось зарегистрировать dogfood launcher." >&2
+  exit 1
+fi
+(
+  umask 077
+  printf '%s\n%s\n%s\n' \
+    "$$" \
+    "$dogfood_current_start" \
+    "$dogfood_current_command" >"$dogfood_supervisor_file"
+)
+dogfood_owned_files+=("$dogfood_supervisor_file")
+
+if lsof -nP -iTCP:8000 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Порт 8000 занят посторонним процессом. Освободите его и повторите." >&2
+  exit 1
+fi
+
+if pgrep -f 'cloudflared.*tunnel.*127\.0\.0\.1:8000' >/dev/null 2>&1; then
+  echo "Найден посторонний Quick Tunnel к порту 8000. Остановите его и повторите." >&2
+  exit 1
+fi
+
+if lsof -nP -iTCP:8081 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "Порт 8081 занят посторонним Expo. Остановите его и повторите." >&2
+  exit 1
+fi
 
 dogfood_start_background() {
   local dogfood_label="$1"
@@ -186,7 +283,7 @@ for dogfood_tunnel_attempt in 1 2; do
     dogfood_tunnel_url="$(<"$dogfood_tunnel_ready_file")"
     if [[ "$dogfood_tunnel_url" =~ ^https://([a-z0-9]|[a-z0-9][a-z0-9-]*[a-z0-9])\.trycloudflare\.com$ ]] && \
       dogfood_child_is_running "$dogfood_tunnel_pid" && \
-      curl --silent --fail --max-time 5 "$dogfood_tunnel_url/health" >/dev/null 2>&1 && \
+      dogfood_curl_health "$dogfood_tunnel_url/health" 5 && \
       dogfood_child_is_running "$dogfood_tunnel_pid"; then
       dogfood_tunnel_ready=1
       break
@@ -225,4 +322,10 @@ fi
 
 echo "Backend и tunnel готовы. Запускаю Expo; QR появится ниже."
 echo "Для остановки всего stack нажмите Ctrl+C."
-bash "$dogfood_script_dir/start-mobile.sh"
+bash "$dogfood_script_dir/start-mobile.sh" &
+dogfood_mobile_pid=$!
+dogfood_owned_pids+=("$dogfood_mobile_pid")
+dogfood_mobile_status=0
+wait "$dogfood_mobile_pid" || dogfood_mobile_status=$?
+dogfood_forget_owned_pid "$dogfood_mobile_pid"
+exit "$dogfood_mobile_status"

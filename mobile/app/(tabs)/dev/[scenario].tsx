@@ -123,7 +123,6 @@ const styles = StyleSheet.create({
   header: { paddingTop: spacing.md },
   content: { flexGrow: 1, paddingBottom: spacing.lg },
   captureArea: {
-    alignItems: 'flex-end',
     paddingTop: spacing.sm,
     paddingBottom: spacing.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
@@ -134,7 +133,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: spacing.xs,
-    paddingHorizontal: 13,
+    paddingHorizontal: spacing.sm,
     borderWidth: 1,
     borderColor: colors.rule,
     borderRadius: radius.control,

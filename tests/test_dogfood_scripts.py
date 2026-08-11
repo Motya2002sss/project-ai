@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import signal
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -140,6 +142,43 @@ def test_wait_for_health_retries_transient_transport_failure(tmp_path: Path):
     assert attempt_file.read_text(encoding="utf-8") == "4"
 
 
+def test_quick_tunnel_health_falls_back_to_direct_a_record(tmp_path: Path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    args_file = tmp_path / "curl-args"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$@\" >>\"$DOGFOOD_CURL_ARGS_FILE\"\n"
+        "for arg in \"$@\"; do\n"
+        "  test \"$arg\" != '--resolve' || exit 0\n"
+        "done\n"
+        "exit 6\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_dig = fake_bin / "dig"
+    fake_dig.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' 104.16.230.132\n",
+        encoding="utf-8",
+    )
+    fake_dig.chmod(0o755)
+
+    result = run_lib(
+        'dogfood_curl_health "$2" 5',
+        "https://calm-dogfood-day.trycloudflare.com/health",
+        env={
+            "DOGFOOD_CURL_ARGS_FILE": str(args_file),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+    )
+
+    assert result.returncode == 0
+    args = args_file.read_text(encoding="utf-8")
+    assert "--resolve" in args
+    assert "calm-dogfood-day.trycloudflare.com:443:104.16.230.132" in args
+
+
 def test_wait_for_health_propagates_child_exit_without_exhausting_retries(
     tmp_path: Path,
 ):
@@ -215,6 +254,20 @@ def test_warm_ollama_rejects_model_name_that_can_break_json(tmp_path: Path):
     assert result.stderr == ""
 
 
+def test_connected_vpn_name_extracts_the_active_service():
+    result = run_lib(
+        "dogfood_connected_vpn_name",
+        input_text=(
+            "Available network connection services in the current set (*=enabled):\n"
+            '* (Connected) 13D01C45 VPN (org.amnezia.awg) "amnezia_for_awg" '
+            "[VPN:org.amnezia.awg]\n"
+        ),
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "amnezia_for_awg\n"
+
+
 def test_single_terminal_launcher_help_describes_owned_stack():
     result = subprocess.run(
         [START, "--help"],
@@ -255,11 +308,18 @@ def test_live_check_keeps_bearer_token_out_of_curl_argv(tmp_path: Path):
         "url=\"${!#}\"\n"
         "has_valid_auth=0\n"
         "has_invalid_auth=0\n"
+        "has_resolve=0\n"
+        "has_write_out=0\n"
         "for arg in \"$@\"; do\n"
         "  test \"$arg\" != '--config' || has_valid_auth=1\n"
         f"  test \"$arg\" != 'Authorization: Bearer {secret}' || has_valid_auth=1\n"
         "  test \"$arg\" != 'Authorization: Bearer intentionally-invalid' || has_invalid_auth=1\n"
+        "  test \"$arg\" != '--resolve' || has_resolve=1\n"
+        "  test \"$arg\" != '--write-out' || has_write_out=1\n"
         "done\n"
+        "if [[ \"$url\" == */health ]] && test \"$has_write_out\" -eq 0 && test \"$has_resolve\" -eq 0; then\n"
+        "  exit 6\n"
+        "fi\n"
         "case \"$url\" in\n"
         "  */health) code=200 ;;\n"
         "  */api/v1/capture) code=422 ;;\n"
@@ -274,6 +334,12 @@ def test_live_check_keeps_bearer_token_out_of_curl_argv(tmp_path: Path):
         encoding="utf-8",
     )
     fake_curl.chmod(0o755)
+    fake_dig = fake_bin / "dig"
+    fake_dig.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' 104.16.230.132\n",
+        encoding="utf-8",
+    )
+    fake_dig.chmod(0o755)
 
     fake_venv_bin = test_root / ".venv" / "bin"
     fake_venv_bin.mkdir(parents=True)
@@ -299,7 +365,68 @@ def test_live_check_keeps_bearer_token_out_of_curl_argv(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     curl_argv = argv_file.read_text(encoding="utf-8")
     assert secret not in curl_argv
-    assert curl_argv.splitlines().count("--max-time") == 5
+    assert curl_argv.splitlines().count("--max-time") == 6
+    assert curl_argv.splitlines().count("--resolve") == 5
+
+
+def test_start_mobile_retries_transient_tunnel_health(tmp_path: Path):
+    test_root = tmp_path / "project"
+    dogfood_dir = test_root / "scripts" / "dogfood"
+    shutil.copytree(ROOT / "scripts" / "dogfood", dogfood_dir)
+    mobile_dir = test_root / "mobile"
+    mobile_dir.mkdir()
+    (mobile_dir / "node_modules").mkdir()
+    (mobile_dir / ".env.local").write_text(
+        "EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com\n",
+        encoding="utf-8",
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    attempts_file = tmp_path / "health-attempts"
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text(
+        "#!/usr/bin/env bash\n"
+        "attempts=0\n"
+        "test ! -f \"$DOGFOOD_ATTEMPT_FILE\" || attempts=$(<\"$DOGFOOD_ATTEMPT_FILE\")\n"
+        "attempts=$((attempts + 1))\n"
+        "printf '%s' \"$attempts\" >\"$DOGFOOD_ATTEMPT_FILE\"\n"
+        "test \"$attempts\" -ge 3\n",
+        encoding="utf-8",
+    )
+    fake_curl.chmod(0o755)
+    fake_dig = fake_bin / "dig"
+    fake_dig.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    fake_dig.chmod(0o755)
+    npm_args_file = tmp_path / "npm-args"
+    fake_npm = fake_bin / "npm"
+    fake_npm.write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" >\"$DOGFOOD_NPM_ARGS_FILE\"\n",
+        encoding="utf-8",
+    )
+    fake_npm.chmod(0o755)
+
+    result = subprocess.run(
+        [dogfood_dir / "start-mobile.sh"],
+        check=False,
+        capture_output=True,
+        env={
+            **os.environ,
+            "DOGFOOD_ATTEMPT_FILE": str(attempts_file),
+            "DOGFOOD_NPM_ARGS_FILE": str(npm_args_file),
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+        },
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert attempts_file.read_text(encoding="utf-8") == "3"
+    assert npm_args_file.read_text(encoding="utf-8").splitlines() == [
+        "start",
+        "--",
+        "--lan",
+    ]
 
 
 def prepare_fake_supervisor_stack(
@@ -435,6 +562,64 @@ def test_single_terminal_launcher_starts_in_order_and_cleans_up_owned_processes(
         unrelated.wait(timeout=2)
 
 
+def test_single_terminal_launcher_blocks_connected_vpn_before_backend(tmp_path: Path):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    fake_bin = Path(environment["PATH"].split(":", 1)[0])
+    fake_scutil = fake_bin / "scutil"
+    fake_scutil.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '* (Connected) 13D01C45 VPN (org.amnezia.awg) "
+        "\"amnezia_for_awg\" [VPN:org.amnezia.awg]'\n",
+        encoding="utf-8",
+    )
+    fake_scutil.chmod(0o755)
+
+    result = subprocess.run(
+        [launcher],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode != 0
+    assert not events_file.exists()
+    assert "активен vpn «amnezia_for_awg»" in result.stderr.lower()
+    assert "DOGFOOD_ALLOW_VPN=1" in result.stderr
+
+
+def test_single_terminal_launcher_allows_explicit_vpn_override(tmp_path: Path):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    fake_bin = Path(environment["PATH"].split(":", 1)[0])
+    fake_scutil = fake_bin / "scutil"
+    fake_scutil.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' '* (Connected) 13D01C45 VPN (org.amnezia.awg) "
+        "\"amnezia_for_awg\" [VPN:org.amnezia.awg]'\n",
+        encoding="utf-8",
+    )
+    fake_scutil.chmod(0o755)
+    environment["DOGFOOD_ALLOW_VPN"] = "1"
+
+    result = subprocess.run(
+        [launcher],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=5,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "VPN разрешён явно" in result.stdout
+    assert events_file.read_text(encoding="utf-8").splitlines()[:3] == [
+        "backend-start",
+        "tunnel-start",
+        "mobile-start",
+    ]
+
+
 def test_single_terminal_launcher_stops_when_backend_child_fails(tmp_path: Path):
     launcher, environment, events_file = prepare_fake_supervisor_stack(
         tmp_path,
@@ -544,3 +729,65 @@ def test_single_terminal_launcher_rejects_ready_url_from_exited_tunnel(
         "tunnel-start",
         "mobile-start",
     ]
+
+
+def test_single_terminal_launcher_restarts_its_recorded_previous_stack(
+    tmp_path: Path,
+):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    runtime_dir = tmp_path / "runtime"
+    environment["DOGFOOD_RUNTIME_DIR"] = str(runtime_dir)
+    mobile_script = launcher.parent / "start-mobile.sh"
+    mobile_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "trap 'echo mobile-stopped >>\"$DOGFOOD_EVENTS_FILE\"; exit 0' TERM INT\n"
+        "echo mobile-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+        "while :; do sleep 0.05; done\n",
+        encoding="utf-8",
+    )
+
+    first = subprocess.Popen(
+        [launcher],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        for _ in range(100):
+            if events_file.exists() and "mobile-start" in events_file.read_text(
+                encoding="utf-8"
+            ):
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError("first dogfood stack did not start")
+
+        mobile_script.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "echo mobile-start >>\"$DOGFOOD_EVENTS_FILE\"\n",
+            encoding="utf-8",
+        )
+
+        second = subprocess.run(
+            [launcher],
+            check=False,
+            capture_output=True,
+            env=environment,
+            text=True,
+            timeout=5,
+        )
+
+        assert second.returncode == 0, second.stderr
+        assert "Перезапускаю предыдущий dogfood stack" in second.stdout
+        first.wait(timeout=2)
+        events = events_file.read_text(encoding="utf-8").splitlines()
+        assert events.count("mobile-start") == 2
+        assert "mobile-stopped" in events
+    finally:
+        if first.poll() is None:
+            os.killpg(first.pid, signal.SIGTERM)
+            first.wait(timeout=2)

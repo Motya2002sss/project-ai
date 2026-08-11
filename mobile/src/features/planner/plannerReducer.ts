@@ -17,6 +17,11 @@ export type CaptureOperation =
       optionId?: string;
     };
 
+export type InteractionCaptureState =
+  | { status: 'clarification'; value: ClarificationDto }
+  | { status: 'confirmation'; value: ConfirmationDto }
+  | { status: 'conflict'; value: ConflictDto };
+
 export type CaptureState =
   | { status: 'idle' }
   | { status: 'editing' }
@@ -25,10 +30,9 @@ export type CaptureState =
       requestId: string;
       operation: CaptureOperation;
       slow: boolean;
+      interaction?: InteractionCaptureState;
     }
-  | { status: 'clarification'; value: ClarificationDto }
-  | { status: 'confirmation'; value: ConfirmationDto }
-  | { status: 'conflict'; value: ConflictDto }
+  | InteractionCaptureState
   | {
       status: 'success';
       planDiff: PlanDiffDto;
@@ -41,6 +45,7 @@ export type CaptureState =
       retryable: boolean;
       requestId?: string;
       operation?: CaptureOperation;
+      interaction?: InteractionCaptureState;
     };
 
 export interface PlannerState {
@@ -102,6 +107,22 @@ export function retryDescriptor(capture: CaptureState): RetryDescriptor | null {
       capture.operation.kind === 'interaction' &&
       capture.operation.optionId === 'cancel',
   };
+}
+
+function captureInteraction(
+  capture: CaptureState,
+): InteractionCaptureState | undefined {
+  if (
+    capture.status === 'clarification' ||
+    capture.status === 'confirmation' ||
+    capture.status === 'conflict'
+  ) {
+    return capture;
+  }
+  if (capture.status === 'submitting' || capture.status === 'error') {
+    return capture.interaction;
+  }
+  return undefined;
 }
 
 export type PlannerAction =
@@ -182,6 +203,9 @@ function responseCaptureState(
       retryable: response.retryable,
       requestId: submitting.requestId,
       operation: submitting.operation,
+      ...(submitting.interaction
+        ? { interaction: submitting.interaction }
+        : {}),
     };
   }
 
@@ -208,8 +232,9 @@ export function plannerReducer(
     case 'capture/closed':
       if (state.capture.status === 'submitting') return state;
       return { ...state, capture: { status: 'idle' } };
-    case 'capture/requestStarted':
+    case 'capture/requestStarted': {
       if (state.capture.status === 'submitting') return state;
+      const interaction = captureInteraction(state.capture);
       return {
         ...state,
         capture: {
@@ -217,8 +242,10 @@ export function plannerReducer(
           requestId: action.requestId,
           operation: action.operation,
           slow: false,
+          ...(interaction ? { interaction } : {}),
         },
       };
+    }
     case 'capture/requestSlow':
       if (
         state.capture.status !== 'submitting' ||
@@ -242,6 +269,9 @@ export function plannerReducer(
           retryable: action.retryable,
           requestId: state.capture.requestId,
           operation: state.capture.operation,
+          ...(state.capture.interaction
+            ? { interaction: state.capture.interaction }
+            : {}),
         },
       };
     case 'capture/responseReceived': {

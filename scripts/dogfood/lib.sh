@@ -72,6 +72,51 @@ dogfood_write_curl_auth_config() {
   )
 }
 
+dogfood_quick_tunnel_resolve_target() {
+  local tunnel_url="$1"
+  local tunnel_label
+  local tunnel_host
+  local tunnel_ip
+
+  if [[ ! "$tunnel_url" =~ ^https://([a-z0-9]|[a-z0-9][a-z0-9-]*[a-z0-9])\.trycloudflare\.com($|/) ]] || \
+    ! command -v dig >/dev/null 2>&1; then
+    return 1
+  fi
+
+  tunnel_label="${BASH_REMATCH[1]}"
+  tunnel_host="${tunnel_label}.trycloudflare.com"
+  tunnel_ip="$(
+    dig +time=2 +tries=1 +short @1.1.1.1 "$tunnel_host" A 2>/dev/null |
+      awk -F . '
+        NF == 4 &&
+        $1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ &&
+        $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ {
+          print
+          exit
+        }
+      '
+  )"
+  test -n "$tunnel_ip" || return 1
+
+  printf '%s:443:%s\n' "$tunnel_host" "$tunnel_ip"
+}
+
+dogfood_curl_health() {
+  local health_url="$1"
+  local max_time="${2:-10}"
+  local resolve_target
+
+  if curl --silent --fail --max-time "$max_time" "$health_url" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  resolve_target="$(dogfood_quick_tunnel_resolve_target "$health_url")" || return 1
+
+  curl --silent --fail --max-time "$max_time" \
+    --resolve "$resolve_target" \
+    "$health_url" >/dev/null 2>&1
+}
+
 dogfood_wait_for_health() {
   local health_url="$1"
   local max_attempts="$2"
@@ -79,7 +124,7 @@ dogfood_wait_for_health() {
   local attempt
 
   for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-    if curl --silent --fail --max-time 10 "$health_url" >/dev/null 2>&1; then
+    if dogfood_curl_health "$health_url" 10; then
       return 0
     fi
     if test "$attempt" -lt "$max_attempts"; then
@@ -99,7 +144,7 @@ dogfood_wait_for_health_while_process_alive() {
   local child_status
 
   for ((attempt = 1; attempt <= max_attempts; attempt += 1)); do
-    if curl --silent --fail --max-time 10 "$health_url" >/dev/null 2>&1 && \
+    if dogfood_curl_health "$health_url" 10 && \
       kill -0 "$child_pid" 2>/dev/null; then
       return 0
     fi
@@ -135,4 +180,19 @@ dogfood_warm_ollama() {
     -H 'Content-Type: application/json' \
     --data "$payload" \
     "$base_url/api/chat" >/dev/null
+}
+
+dogfood_connected_vpn_name() {
+  awk -F '"' '
+    /\(Connected\)/ {
+      if (NF >= 3 && length($2) > 0) {
+        print $2
+      } else {
+        print "VPN"
+      }
+      found = 1
+      exit
+    }
+    END { if (!found) exit 1 }
+  '
 }

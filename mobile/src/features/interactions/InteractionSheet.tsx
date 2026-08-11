@@ -7,25 +7,26 @@ import { radius } from '../../theme/radius';
 import { spacing } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { mapPlanDiff } from '../capture/planDiffMapper';
-import type { CaptureState } from '../planner/plannerReducer';
-
-type InteractionState = Extract<
-  CaptureState,
-  { status: 'clarification' | 'confirmation' | 'conflict' }
->;
+import type { InteractionCaptureState } from '../planner/plannerReducer';
 
 interface InteractionSheetProps {
-  capture: InteractionState;
+  busy: boolean;
+  capture: InteractionCaptureState;
+  errorMessage: string | null;
   snapshot: DaySnapshotDto | null;
   onClose: () => void;
   onRespond: (interactionId: string, optionId?: string, text?: string) => void;
+  onRetry?: () => void;
 }
 
 export function InteractionSheet({
+  busy,
   capture,
+  errorMessage,
   snapshot,
   onClose,
   onRespond,
+  onRetry,
 }: InteractionSheetProps) {
   const [answer, setAnswer] = useState('');
   let interactionId: string | null;
@@ -67,7 +68,7 @@ export function InteractionSheet({
   useEffect(() => setAnswer(''), [interactionId]);
 
   const choose = (option: InteractionOptionDto) => {
-    if (!interactionId) return;
+    if (busy || !interactionId) return;
     onRespond(interactionId, option.id, option.value);
   };
 
@@ -80,8 +81,10 @@ export function InteractionSheet({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Закрыть"
+          accessibilityState={{ disabled: busy }}
+          disabled={busy}
           onPress={onClose}
-          style={styles.close}
+          style={[styles.close, busy && styles.disabled]}
         >
           <Text style={styles.closeText}>×</Text>
         </Pressable>
@@ -100,9 +103,15 @@ export function InteractionSheet({
         {options.map((option) => (
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: busy }}
+            disabled={busy}
             key={option.id}
             onPress={() => choose(option)}
-            style={({ pressed }) => [styles.option, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.option,
+              pressed && !busy && styles.pressed,
+              busy && styles.disabled,
+            ]}
           >
             <Text style={styles.optionLabel}>{option.label}</Text>
           </Pressable>
@@ -112,6 +121,7 @@ export function InteractionSheet({
         <View style={styles.freeText}>
           <TextInput
             accessibilityLabel="Ответить своими словами"
+            editable={!busy}
             multiline
             onChangeText={setAnswer}
             placeholder="Ответить своими словами"
@@ -121,13 +131,39 @@ export function InteractionSheet({
           />
           <Pressable
             accessibilityRole="button"
-            accessibilityState={{ disabled: !answer.trim() }}
-            disabled={!answer.trim()}
+            accessibilityState={{ disabled: busy || !answer.trim() }}
+            disabled={busy || !answer.trim()}
             onPress={() => onRespond(interactionId!, undefined, answer)}
-            style={[styles.send, !answer.trim() && styles.disabled]}
+            style={[
+              styles.send,
+              (busy || !answer.trim()) && styles.disabled,
+            ]}
           >
-            <Text style={styles.sendText}>Ответить</Text>
+            <Text style={styles.sendText}>
+              {busy ? 'Отправляю…' : 'Ответить'}
+            </Text>
           </Pressable>
+        </View>
+      ) : null}
+      {busy && !freeTextAllowed ? (
+        <Text accessibilityLiveRegion="polite" style={styles.status}>
+          Отправляю ответ…
+        </Text>
+      ) : null}
+      {errorMessage ? (
+        <View style={styles.errorBlock}>
+          <Text accessibilityLiveRegion="polite" style={styles.errorText}>
+            {errorMessage}
+          </Text>
+          {onRetry ? (
+            <Pressable
+              accessibilityRole="button"
+              onPress={onRetry}
+              style={styles.retry}
+            >
+              <Text style={styles.retryText}>Повторить отправку</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -204,5 +240,18 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ink,
   },
   sendText: { ...typography.bodyMedium, color: colors.paper },
+  status: { ...typography.body, color: colors.muted, marginTop: spacing.md },
+  errorBlock: { marginTop: spacing.md },
+  errorText: { ...typography.body, color: colors.burgundy },
+  retry: {
+    minHeight: spacing.touch,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.burgundy,
+    borderRadius: radius.control,
+  },
+  retryText: { ...typography.bodyMedium, color: colors.burgundy },
   disabled: { opacity: 0.4 },
 });
