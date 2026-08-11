@@ -292,7 +292,19 @@ def recalculate_goal_progress(
         ).all()
         weeks = D(window_days) / D("7")
         planned_minutes = sum(
-            (D(commitment.target_minutes_week) * weeks for commitment in commitments),
+            (
+                D(
+                    max(
+                        commitment.target_minutes_week,
+                        commitment.target_sessions_week
+                        * commitment.minimum_block_minutes,
+                    )
+                    if commitment.target_minutes_week > 0
+                    else 0
+                )
+                * weeks
+                for commitment in commitments
+            ),
             D("0"),
         )
         planned_sessions = sum(

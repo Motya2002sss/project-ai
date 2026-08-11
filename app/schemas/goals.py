@@ -211,6 +211,11 @@ class ProgramCommitmentInput(BaseModel):
             raise ValueError("allowed_weekdays must use ISO weekdays 1-7")
         if self.target_minutes_week == 0 and self.target_sessions_week == 0:
             raise ValueError("commitment requires minutes or sessions")
+        minimum_load = max(1, self.target_sessions_week) * self.minimum_block_minutes
+        if 0 < self.target_minutes_week < minimum_load:
+            raise ValueError(
+                "target_minutes_week cannot cover the requested minimum blocks"
+            )
         return self
 
 
@@ -246,7 +251,13 @@ class ProgramProposalInput(BaseModel):
             for item in self.commitments
         ):
             raise ValueError("commitment references an unknown phase")
-        committed_minutes = sum(item.target_minutes_week for item in self.commitments)
+        committed_minutes = sum(
+            max(
+                item.target_minutes_week,
+                item.target_sessions_week * item.minimum_block_minutes,
+            )
+            for item in self.commitments
+        )
         if committed_minutes > self.comfortable_minutes_week:
             raise ValueError("commitments exceed comfortable program load")
         return self

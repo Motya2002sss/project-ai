@@ -290,6 +290,115 @@ def test_recalculation_counts_only_factual_evidence_in_rolling_window(
     assert result.components["completed_minutes"] == "180.0000"
 
 
+def test_mixed_consistency_load_uses_effective_minimum_block_denominator(
+    db: Session,
+) -> None:
+    user = User(external_id="mixed-load-owner")
+    db.add(user)
+    db.flush()
+    goal = Goal(user_id=user.id, title="Практиковаться", outcome_type="consistency")
+    db.add(goal)
+    db.flush()
+    program = Program(
+        user_id=user.id,
+        goal_id=goal.id,
+        name="Практика",
+        status="active",
+        minimum_minutes_week=60,
+        comfortable_minutes_week=120,
+        maximum_minutes_week=120,
+        adaptation_rules={},
+    )
+    db.add(program)
+    db.flush()
+    commitment = WeeklyCommitment(
+        user_id=user.id,
+        goal_id=goal.id,
+        program_id=program.id,
+        title="Четыре блока",
+        target_minutes_week=100,
+        target_sessions_week=4,
+        minimum_block_minutes=30,
+        allowed_weekdays=[1, 2, 3, 4],
+    )
+    db.add(commitment)
+    db.flush()
+    db.add(
+        Evidence(
+            user_id=user.id,
+            goal_id=goal.id,
+            commitment_id=commitment.id,
+            request_id="mixed-load-evidence",
+            evidence_type="partial",
+            quantity=D("240"),
+            unit="minutes",
+            occurred_at=AS_OF - timedelta(days=1),
+            attributes={},
+        )
+    )
+    db.commit()
+
+    result = recalculate_goal_progress(db, user=user, goal=goal, as_of=AS_OF)
+
+    assert result.components["planned_minutes"] == "480"
+    assert result.percentage == D("50.00")
+
+
+def test_session_only_consistency_keeps_sessions_as_the_denominator(
+    db: Session,
+) -> None:
+    user = User(external_id="session-only-progress-owner")
+    db.add(user)
+    db.flush()
+    goal = Goal(user_id=user.id, title="Практиковаться", outcome_type="consistency")
+    db.add(goal)
+    db.flush()
+    program = Program(
+        user_id=user.id,
+        goal_id=goal.id,
+        name="Практика",
+        status="active",
+        minimum_minutes_week=0,
+        comfortable_minutes_week=90,
+        maximum_minutes_week=90,
+        adaptation_rules={},
+    )
+    db.add(program)
+    db.flush()
+    commitment = WeeklyCommitment(
+        user_id=user.id,
+        goal_id=goal.id,
+        program_id=program.id,
+        title="Три сессии",
+        target_minutes_week=0,
+        target_sessions_week=3,
+        minimum_block_minutes=30,
+        allowed_weekdays=[1, 3, 5],
+    )
+    db.add(commitment)
+    db.flush()
+    for index in range(6):
+        db.add(
+            Evidence(
+                user_id=user.id,
+                goal_id=goal.id,
+                commitment_id=commitment.id,
+                request_id=f"session-only-{index}",
+                evidence_type="session",
+                occurred_at=AS_OF - timedelta(days=index + 1),
+                attributes={},
+            )
+        )
+    db.commit()
+
+    result = recalculate_goal_progress(db, user=user, goal=goal, as_of=AS_OF)
+
+    assert result.components["planned_minutes"] == "0"
+    assert result.components["planned_sessions"] == 12
+    assert result.components["denominator"] == "sessions"
+    assert result.percentage == D("50.00")
+
+
 def test_completed_tasks_never_become_goal_outcome_progress(db: Session) -> None:
     user = User(external_id="task-count-owner")
     db.add(user)

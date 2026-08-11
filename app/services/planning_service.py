@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -15,7 +16,12 @@ from app.services.time_service import (
     get_user_now,
     resolve_target_date,
 )
-from app.services.routine_service import materialize_routine_occurrences
+from app.services.routine_service import (
+    WeeklyCommitmentShortfall,
+    materialize_routine_occurrences,
+    materialize_weekly_commitments,
+)
+from app.services.task_duration_service import estimate_task_minutes
 
 
 PRIORITY_ORDER = {
@@ -62,6 +68,7 @@ class PlanBuildResult:
     day_plan: DayPlan
     conflicts: list[PlanningConflict] = field(default_factory=list)
     unscheduled_task_ids: list[int] = field(default_factory=list)
+    commitment_shortfalls: list[WeeklyCommitmentShortfall] = field(default_factory=list)
 
 
 def intervals_overlap(left: TimeInterval, right: TimeInterval) -> bool:
@@ -253,24 +260,6 @@ def format_plan_date(plan_date: date, user: User | None = None) -> str:
     return plan_date.strftime("%d.%m.%Y")
 
 
-def estimate_task_minutes(task: Task) -> int:
-    if task.estimated_minutes:
-        return task.estimated_minutes
-
-    title = task.title.lower()
-
-    if "собес" in title or "подготов" in title:
-        return 90
-
-    if "зал" in title or "трен" in title:
-        return 60
-
-    if "магаз" in title or "продукт" in title:
-        return 30
-
-    return 60
-
-
 def _parse_hhmm(value: str | None) -> time | None:
     if not value:
         return None
@@ -407,6 +396,26 @@ def _first_conflicting_interval(
     return next((interval for interval in occupied if intervals_overlap(candidate, interval)), None)
 
 
+def _commitment_recovery_constraints(
+    task: Task,
+    commitment_intervals: dict[UUID, list[TimeInterval]],
+) -> list[TimeInterval]:
+    if task.commitment_id is None or task.commitment is None:
+        return []
+    gap_minutes = task.commitment.recovery_gap_minutes
+    if gap_minutes <= 0:
+        return []
+    gap = timedelta(minutes=gap_minutes)
+    return [
+        TimeInterval(
+            interval.start - gap,
+            interval.end + gap,
+            "восстановление между сессиями",
+        )
+        for interval in commitment_intervals.get(task.commitment_id, [])
+    ]
+
+
 def _deadline_sort_value(task: Task, current_time: datetime) -> float:
     if task.deadline is None:
         return float("inf")
@@ -516,6 +525,13 @@ def build_day_plan_result(
     day_plan.items.clear()
     db.flush()
 
+    commitment_result = materialize_weekly_commitments(
+        db,
+        user,
+        resolved_date - timedelta(days=resolved_date.isoweekday() - 1),
+        now=current_time,
+        commit=False,
+    )
     materialize_routine_occurrences(
         db,
         user,
@@ -533,6 +549,7 @@ def build_day_plan_result(
         .all()
     )
     occupied: list[TimeInterval] = []
+    commitment_intervals: dict[UUID, list[TimeInterval]] = {}
     work_interval = _work_interval(user, resolved_date, bounds, day_plan)
 
     if work_interval:
@@ -567,6 +584,10 @@ def build_day_plan_result(
 
         if existing_interval:
             occupied.append(existing_interval)
+            if task.commitment_id is not None:
+                commitment_intervals.setdefault(task.commitment_id, []).append(
+                    existing_interval
+                )
 
         scheduled_task_ids.add(task.id)
 
@@ -585,7 +606,10 @@ def build_day_plan_result(
             scheduled_task_ids.add(task.id)
             continue
 
-        conflict = _first_conflicting_interval(interval, occupied)
+        conflict = _first_conflicting_interval(
+            interval,
+            occupied + _commitment_recovery_constraints(task, commitment_intervals),
+        )
         reason = None
 
         if interval.start < bounds.start or interval.end > bounds.end:
@@ -614,6 +638,8 @@ def build_day_plan_result(
 
         append_item(task, status="planned", interval=interval)
         occupied.append(interval)
+        if task.commitment_id is not None:
+            commitment_intervals.setdefault(task.commitment_id, []).append(interval)
         scheduled_task_ids.add(task.id)
 
     flexible_tasks = [
@@ -636,10 +662,18 @@ def build_day_plan_result(
         if (
             existing_interval
             and _interval_fits_task(existing_interval, task, bounds, available_start, user)
-            and not _first_conflicting_interval(existing_interval, occupied)
+            and not _first_conflicting_interval(
+                existing_interval,
+                occupied
+                + _commitment_recovery_constraints(task, commitment_intervals),
+            )
         ):
             append_item(task, status="planned", interval=existing_interval)
             occupied.append(existing_interval)
+            if task.commitment_id is not None:
+                commitment_intervals.setdefault(task.commitment_id, []).append(
+                    existing_interval
+                )
             scheduled_task_ids.add(task.id)
 
     remaining_tasks = sorted(
@@ -659,7 +693,7 @@ def build_day_plan_result(
         slots = find_available_slots(
             available_start,
             bounds.end,
-            occupied,
+            occupied + _commitment_recovery_constraints(task, commitment_intervals),
             duration,
             preferred_window=preferred,
             earliest_start=earliest,
@@ -679,6 +713,8 @@ def build_day_plan_result(
 
         append_item(task, status="planned", interval=chosen)
         occupied.append(chosen)
+        if task.commitment_id is not None:
+            commitment_intervals.setdefault(task.commitment_id, []).append(chosen)
 
     day_plan.status = "conflict" if conflicts else "overloaded" if unscheduled_task_ids else "draft"
     current_items_signature = sorted(
@@ -712,10 +748,29 @@ def build_day_plan_result(
         db.commit()
         db.refresh(day_plan)
 
+    commitment_shortfalls = list(commitment_result.shortfalls)
+    tasks_by_id = {task.id: task for task in tasks}
+    for item in day_plan.items:
+        task = tasks_by_id.get(item.task_id) if item.task_id is not None else None
+        if (
+            item.status == "not_scheduled"
+            and task is not None
+            and task.commitment_id is not None
+        ):
+            commitment_shortfalls.append(
+                WeeklyCommitmentShortfall(
+                    commitment_id=task.commitment_id,
+                    missing_minutes=estimate_task_minutes(task),
+                    missing_sessions=1,
+                    reason=f"placement_{item.unscheduled_reason or 'unknown'}",
+                )
+            )
+
     return PlanBuildResult(
         day_plan=day_plan,
         conflicts=conflicts,
         unscheduled_task_ids=unscheduled_task_ids,
+        commitment_shortfalls=commitment_shortfalls,
     )
 
 
