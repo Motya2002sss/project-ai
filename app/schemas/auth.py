@@ -83,6 +83,15 @@ class AccountExportResponse(BaseModel):
     profile: AccountExportProfile
     goals: list[dict]
     tasks: list[dict]
+    workout_exercises: list[dict]
+    workout_sets: list[dict]
+    nutrition_logs: list[dict]
+    learning_resources: list[dict]
+    learning_sessions: list[dict]
+    calendar_busy_blocks: list[dict]
+    calendar_sync_states: list[dict]
+    temporary_life_modes: list[dict]
+    plan_changes: list[dict]
     routines: list[dict]
     resource_budget: dict | None
     onboarding_previews: list[dict]

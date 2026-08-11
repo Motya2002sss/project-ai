@@ -57,6 +57,19 @@ class TimeInterval:
 
 
 @dataclass(frozen=True)
+class FlexibleCapacityLimit:
+    interval: TimeInterval
+    max_flexible_minutes: int | None = None
+    reserve_minutes: int = 0
+
+    def __post_init__(self) -> None:
+        if self.max_flexible_minutes is not None and self.max_flexible_minutes < 0:
+            raise ValueError("max_flexible_minutes must be non-negative")
+        if self.reserve_minutes < 0:
+            raise ValueError("reserve_minutes must be non-negative")
+
+
+@dataclass(frozen=True)
 class PlanningConflict:
     task_id: int
     title: str
@@ -177,6 +190,123 @@ def choose_best_slot(
             key=lambda interval: (abs((interval.start - existing_start).total_seconds()), interval.start),
         )
 
+    return min(candidates, key=lambda interval: interval.start)
+
+
+def _overlap_minutes(left: TimeInterval, right: TimeInterval) -> float:
+    start = max(left.start, right.start)
+    end = min(left.end, right.end)
+    if end <= start:
+        return 0.0
+    return (end - start).total_seconds() / 60
+
+
+def _covered_minutes(interval: TimeInterval, occupied: list[TimeInterval]) -> float:
+    clipped = [
+        TimeInterval(
+            max(item.start, interval.start),
+            min(item.end, interval.end),
+            item.label,
+        )
+        for item in occupied
+        if intervals_overlap(item, interval)
+    ]
+    return sum(
+        (item.end - item.start).total_seconds() / 60
+        for item in _merge_intervals(clipped)
+    )
+
+
+def _flexible_capacity_allows(
+    candidate: TimeInterval,
+    *,
+    limits: list[FlexibleCapacityLimit],
+    scheduled_flexible: list[TimeInterval],
+    non_flexible_occupied: list[TimeInterval],
+) -> bool:
+    for limit in limits:
+        candidate_minutes = _overlap_minutes(candidate, limit.interval)
+        if candidate_minutes == 0:
+            continue
+        used_minutes = sum(
+            _overlap_minutes(item, limit.interval)
+            for item in scheduled_flexible
+        )
+        interval_minutes = (
+            limit.interval.end - limit.interval.start
+        ).total_seconds() / 60
+        available_minutes = max(
+            0,
+            interval_minutes
+            - _covered_minutes(limit.interval, non_flexible_occupied)
+            - limit.reserve_minutes,
+        )
+        allowed_minutes = available_minutes
+        if limit.max_flexible_minutes is not None:
+            allowed_minutes = min(allowed_minutes, limit.max_flexible_minutes)
+        if used_minutes + candidate_minutes > allowed_minutes:
+            return False
+    return True
+
+
+def _choose_capacity_aware_slot(
+    available_slots: list[TimeInterval],
+    duration_minutes: int,
+    *,
+    existing_start: datetime | None,
+    limits: list[FlexibleCapacityLimit],
+    scheduled_flexible: list[TimeInterval],
+    non_flexible_occupied: list[TimeInterval],
+) -> TimeInterval | None:
+    if not limits:
+        return choose_best_slot(
+            available_slots,
+            duration_minutes,
+            existing_start=existing_start,
+        )
+
+    duration = timedelta(minutes=duration_minutes)
+    candidates: list[TimeInterval] = []
+    for slot in available_slots:
+        latest_start = slot.end - duration
+        candidate_starts = {slot.start, latest_start}
+        if existing_start is not None:
+            candidate_starts.add(existing_start)
+        for limit in limits:
+            candidate_starts.update(
+                {
+                    limit.interval.start,
+                    limit.interval.end,
+                    limit.interval.start - duration,
+                    limit.interval.end - duration,
+                }
+            )
+        cursor = ceil_datetime(slot.start, SCHEDULING_STEP_MINUTES)
+        while cursor <= latest_start:
+            candidate_starts.add(cursor)
+            cursor += timedelta(minutes=SCHEDULING_STEP_MINUTES)
+        for candidate_start in candidate_starts:
+            if candidate_start < slot.start or candidate_start > latest_start:
+                continue
+            candidate = TimeInterval(candidate_start, candidate_start + duration)
+            if _flexible_capacity_allows(
+                candidate,
+                limits=limits,
+                scheduled_flexible=scheduled_flexible,
+                non_flexible_occupied=non_flexible_occupied,
+            ):
+                candidates.append(candidate)
+
+    if not candidates:
+        return None
+    if existing_start is not None:
+        return min(
+            candidates,
+            key=lambda interval: (
+                abs((interval.start - existing_start).total_seconds()),
+                interval.start,
+            ),
+        )
     return min(candidates, key=lambda interval: interval.start)
 
 
@@ -331,6 +461,14 @@ def _task_preferred_interval(task: Task, plan_date: date, user: User) -> TimeInt
     return TimeInterval(start, end, task.preferred_window)
 
 
+def _task_latest_datetime(task: Task, plan_date: date, user: User) -> datetime | None:
+    latest = _task_datetime(plan_date, task.latest_end, user)
+    if task.deadline is None:
+        return latest
+    deadline = get_user_now(user, task.deadline)
+    return min(latest, deadline) if latest is not None else deadline
+
+
 def _fixed_task_interval(task: Task, plan_date: date, user: User) -> TimeInterval | None:
     start = _task_datetime(plan_date, task.fixed_start, user)
 
@@ -374,7 +512,7 @@ def _interval_fits_task(
         return False
 
     earliest = _task_datetime(task.target_date, task.earliest_start, user)
-    latest = _task_datetime(task.target_date, task.latest_end, user)
+    latest = _task_latest_datetime(task, task.target_date, user)
     preferred = _task_preferred_interval(task, task.target_date, user)
 
     if earliest and interval.start < earliest:
@@ -472,6 +610,12 @@ def build_day_plan_result(
     plan_date: date | None = None,
     now: datetime | None = None,
     commit: bool = True,
+    additional_occupied: list[TimeInterval] | None = None,
+    immutable_before: datetime | None = None,
+    materialize_sources: bool = True,
+    max_flexible_minutes: int | None = None,
+    flexible_capacity_limits: list[FlexibleCapacityLimit] | None = None,
+    preserve_item_identity: bool = False,
 ) -> PlanBuildResult:
     resolved_date = plan_date or get_plan_date(parsed_message, user=user, now=now)
     current_time = get_user_now(user, now)
@@ -522,22 +666,27 @@ def build_day_plan_result(
         for item in existing_items
         if item.task_id is not None
     }
-    day_plan.items.clear()
-    db.flush()
+    candidate_items: list[PlanItem] = []
+    if not preserve_item_identity:
+        day_plan.items.clear()
+        db.flush()
 
-    commitment_result = materialize_weekly_commitments(
-        db,
-        user,
-        resolved_date - timedelta(days=resolved_date.isoweekday() - 1),
-        now=current_time,
-        commit=False,
-    )
-    materialize_routine_occurrences(
-        db,
-        user,
-        resolved_date,
-        commit=False,
-    )
+    commitment_shortfalls: list[WeeklyCommitmentShortfall] = []
+    if materialize_sources:
+        commitment_result = materialize_weekly_commitments(
+            db,
+            user,
+            resolved_date - timedelta(days=resolved_date.isoweekday() - 1),
+            now=current_time,
+            commit=False,
+        )
+        commitment_shortfalls.extend(commitment_result.shortfalls)
+        materialize_routine_occurrences(
+            db,
+            user,
+            resolved_date,
+            commit=False,
+        )
     tasks = (
         db.query(Task)
         .filter(
@@ -548,16 +697,40 @@ def build_day_plan_result(
         .order_by(Task.id.asc())
         .all()
     )
-    occupied: list[TimeInterval] = []
+    persisted_occupied: list[TimeInterval] = []
+    persisted_capacity_limits: list[FlexibleCapacityLimit] = []
+    if additional_occupied is None or flexible_capacity_limits is None:
+        # Local import avoids a module cycle: adaptive planning already owns the
+        # canonical persisted Calendar/temporary-mode constraint loader.
+        from app.services.plan_change_service import _planning_constraints
+
+        persisted_occupied, persisted_capacity_limits = _planning_constraints(
+            db,
+            user=user,
+            plan_date=resolved_date,
+        )
+    external_occupied = list(
+        persisted_occupied if additional_occupied is None else additional_occupied
+    )
+    occupied: list[TimeInterval] = list(external_occupied)
+    non_flexible_occupied: list[TimeInterval] = list(external_occupied)
+    scheduled_flexible_intervals: list[TimeInterval] = []
+    capacity_limits = list(
+        persisted_capacity_limits
+        if flexible_capacity_limits is None
+        else flexible_capacity_limits
+    )
     commitment_intervals: dict[UUID, list[TimeInterval]] = {}
     work_interval = _work_interval(user, resolved_date, bounds, day_plan)
 
     if work_interval:
         occupied.append(work_interval)
+        non_flexible_occupied.append(work_interval)
 
     conflicts: list[PlanningConflict] = []
     unscheduled_task_ids: list[int] = []
     scheduled_task_ids: set[int] = set()
+    scheduled_flexible_minutes = 0
 
     def append_item(
         task: Task,
@@ -566,17 +739,31 @@ def build_day_plan_result(
         interval: TimeInterval | None = None,
         reason: str | None = None,
     ) -> None:
-        day_plan.items.append(
-            PlanItem(
+        item = (
+            existing_by_task.get(task.id)
+            if preserve_item_identity
+            else None
+        )
+        if item is None:
+            item = PlanItem(
                 task_id=task.id,
-                start_time=interval.start.timetz().replace(tzinfo=None) if interval else None,
-                end_time=interval.end.timetz().replace(tzinfo=None) if interval else None,
                 title=task.title,
                 item_type="task",
-                status=status,
-                unscheduled_reason=reason,
             )
+        item.start_time = (
+            interval.start.timetz().replace(tzinfo=None) if interval else None
         )
+        item.end_time = (
+            interval.end.timetz().replace(tzinfo=None) if interval else None
+        )
+        item.title = task.title
+        item.item_type = "task"
+        item.status = status
+        item.unscheduled_reason = reason
+        if preserve_item_identity:
+            candidate_items.append(item)
+        else:
+            day_plan.items.append(item)
 
     for task in [item for item in tasks if item.status == "done"]:
         existing_interval = _item_interval(existing_by_task.get(task.id), resolved_date, user) if existing_by_task.get(task.id) else None
@@ -584,6 +771,7 @@ def build_day_plan_result(
 
         if existing_interval:
             occupied.append(existing_interval)
+            non_flexible_occupied.append(existing_interval)
             if task.commitment_id is not None:
                 commitment_intervals.setdefault(task.commitment_id, []).append(
                     existing_interval
@@ -591,14 +779,65 @@ def build_day_plan_result(
 
         scheduled_task_ids.add(task.id)
 
+    if immutable_before is not None:
+        for task in [item for item in tasks if item.status == "planned"]:
+            existing = existing_by_task.get(task.id)
+            existing_interval = (
+                _item_interval(existing, resolved_date, user) if existing else None
+            )
+            if existing_interval is None or existing_interval.start >= immutable_before:
+                continue
+            conflict = _first_conflicting_interval(
+                existing_interval,
+                [
+                    interval
+                    for interval in external_occupied
+                    if interval.end > immutable_before
+                ],
+            )
+            if conflict is not None:
+                conflicts.append(
+                    PlanningConflict(
+                        task_id=task.id,
+                        title=task.title,
+                        message=(
+                            f"Нельзя автоматически изменить уже начавшийся интервал "
+                            f"«{task.title}»: он пересекается с {conflict.label or 'новым ограничением'}."
+                        ),
+                    )
+                )
+            append_item(task, status="planned", interval=existing_interval)
+            occupied.append(existing_interval)
+            if task.scheduling_type == "fixed" or task.is_locked:
+                non_flexible_occupied.append(existing_interval)
+            else:
+                scheduled_flexible_intervals.append(existing_interval)
+            if task.commitment_id is not None:
+                commitment_intervals.setdefault(task.commitment_id, []).append(
+                    existing_interval
+                )
+            scheduled_task_ids.add(task.id)
+
     fixed_tasks = [
         task
         for task in tasks
-        if task.status == "planned" and (task.scheduling_type == "fixed" or task.is_locked)
+        if task.status == "planned"
+        and task.id not in scheduled_task_ids
+        and (task.scheduling_type == "fixed" or task.is_locked)
     ]
 
     for task in sorted(fixed_tasks, key=lambda item: (item.fixed_start or time.max, item.id)):
-        interval = _fixed_task_interval(task, resolved_date, user)
+        existing = existing_by_task.get(task.id)
+        existing_interval = (
+            _item_interval(existing, resolved_date, user) if existing else None
+        )
+        interval = (
+            existing_interval
+            if preserve_item_identity
+            and (task.is_locked or task.scheduling_type == "fixed")
+            and existing_interval is not None
+            else _fixed_task_interval(task, resolved_date, user)
+        )
 
         if interval is None:
             append_item(task, status="not_scheduled", reason="missing_fixed_time")
@@ -638,6 +877,7 @@ def build_day_plan_result(
 
         append_item(task, status="planned", interval=interval)
         occupied.append(interval)
+        non_flexible_occupied.append(interval)
         if task.commitment_id is not None:
             commitment_intervals.setdefault(task.commitment_id, []).append(interval)
         scheduled_task_ids.add(task.id)
@@ -662,6 +902,17 @@ def build_day_plan_result(
         if (
             existing_interval
             and _interval_fits_task(existing_interval, task, bounds, available_start, user)
+            and (
+                max_flexible_minutes is None
+                or scheduled_flexible_minutes + estimate_task_minutes(task)
+                <= max_flexible_minutes
+            )
+            and _flexible_capacity_allows(
+                existing_interval,
+                limits=capacity_limits,
+                scheduled_flexible=scheduled_flexible_intervals,
+                non_flexible_occupied=non_flexible_occupied,
+            )
             and not _first_conflicting_interval(
                 existing_interval,
                 occupied
@@ -670,10 +921,12 @@ def build_day_plan_result(
         ):
             append_item(task, status="planned", interval=existing_interval)
             occupied.append(existing_interval)
+            scheduled_flexible_intervals.append(existing_interval)
             if task.commitment_id is not None:
                 commitment_intervals.setdefault(task.commitment_id, []).append(
                     existing_interval
                 )
+            scheduled_flexible_minutes += estimate_task_minutes(task)
             scheduled_task_ids.add(task.id)
 
     remaining_tasks = sorted(
@@ -687,9 +940,16 @@ def build_day_plan_result(
 
     for task in remaining_tasks:
         duration = estimate_task_minutes(task)
+        if (
+            max_flexible_minutes is not None
+            and scheduled_flexible_minutes + duration > max_flexible_minutes
+        ):
+            append_item(task, status="not_scheduled", reason="capacity_limit")
+            unscheduled_task_ids.append(task.id)
+            continue
         preferred = _task_preferred_interval(task, resolved_date, user)
         earliest = _task_datetime(resolved_date, task.earliest_start, user)
-        latest = _task_datetime(resolved_date, task.latest_end, user)
+        latest = _task_latest_datetime(task, resolved_date, user)
         slots = find_available_slots(
             available_start,
             bounds.end,
@@ -699,10 +959,21 @@ def build_day_plan_result(
             earliest_start=earliest,
             latest_end=latest,
         )
-        chosen = choose_best_slot(slots, duration)
+        chosen = _choose_capacity_aware_slot(
+            slots,
+            duration,
+            existing_start=existing_interval.start if existing_interval else None,
+            limits=capacity_limits,
+            scheduled_flexible=scheduled_flexible_intervals,
+            non_flexible_occupied=non_flexible_occupied,
+        )
 
         if chosen is None:
-            reason = "no_available_slot"
+            reason = (
+                "capacity_limit"
+                if slots and capacity_limits
+                else "no_available_slot"
+            )
 
             if preferred and resolved_date == current_time.date() and preferred.end <= available_start:
                 reason = "preferred_window_passed"
@@ -713,9 +984,13 @@ def build_day_plan_result(
 
         append_item(task, status="planned", interval=chosen)
         occupied.append(chosen)
+        scheduled_flexible_intervals.append(chosen)
         if task.commitment_id is not None:
             commitment_intervals.setdefault(task.commitment_id, []).append(chosen)
+        scheduled_flexible_minutes += duration
 
+    if preserve_item_identity:
+        day_plan.items = candidate_items
     day_plan.status = "conflict" if conflicts else "overloaded" if unscheduled_task_ids else "draft"
     current_items_signature = sorted(
         (
@@ -748,7 +1023,6 @@ def build_day_plan_result(
         db.commit()
         db.refresh(day_plan)
 
-    commitment_shortfalls = list(commitment_result.shortfalls)
     tasks_by_id = {task.id: task for task in tasks}
     for item in day_plan.items:
         task = tasks_by_id.get(item.task_id) if item.task_id is not None else None

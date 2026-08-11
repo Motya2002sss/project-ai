@@ -17,6 +17,10 @@ class ReceiptReservation:
     processing: bool = False
 
 
+class IdempotencyConflict(ValueError):
+    pass
+
+
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -31,6 +35,7 @@ def reserve_message_request(
     *,
     request_id: str,
     source: str,
+    fingerprint: str,
 ) -> ReceiptReservation:
     existing = (
         db.query(MessageReceipt)
@@ -48,6 +53,11 @@ def reserve_message_request(
         existing = None
 
     if existing:
+        stored_fingerprint = (existing.response_payload or {}).get(
+            "_request_fingerprint"
+        )
+        if existing.source != source or stored_fingerprint != fingerprint:
+            raise IdempotencyConflict("idempotency_conflict")
         if existing.status == "completed" and existing.response_payload:
             return ReceiptReservation(
                 receipt=existing,
@@ -61,6 +71,7 @@ def reserve_message_request(
         request_id=request_id,
         source=source,
         status="processing",
+        response_payload={"_request_fingerprint": fingerprint},
         expires_at=now + timedelta(hours=settings.idempotency_ttl_hours),
     )
     db.add(receipt)
@@ -80,6 +91,12 @@ def reserve_message_request(
             .one()
         )
 
+        stored_fingerprint = (existing.response_payload or {}).get(
+            "_request_fingerprint"
+        )
+        if existing.source != source or stored_fingerprint != fingerprint:
+            raise IdempotencyConflict("idempotency_conflict")
+
         if existing.status == "completed" and existing.response_payload:
             return ReceiptReservation(
                 receipt=existing,
@@ -94,12 +111,18 @@ def complete_message_request(
     receipt: MessageReceipt,
     response: MessageResponse,
 ) -> None:
+    fingerprint = (receipt.response_payload or {}).get("_request_fingerprint")
     receipt.status = "completed"
     receipt.response_payload = response.model_dump(mode="json")
+    if fingerprint:
+        receipt.response_payload["_request_fingerprint"] = fingerprint
     db.commit()
 
 
 def fail_message_request(db: Session, receipt: MessageReceipt) -> None:
     receipt.status = "failed"
-    receipt.response_payload = None
+    fingerprint = (receipt.response_payload or {}).get("_request_fingerprint")
+    receipt.response_payload = (
+        {"_request_fingerprint": fingerprint} if fingerprint else None
+    )
     db.commit()

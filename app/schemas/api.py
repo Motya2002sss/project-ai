@@ -48,6 +48,7 @@ class TaskStatusRequest(BaseModel):
 
 class TaskResponse(BaseModel):
     id: int
+    goal_id: int | None = None
     title: str
     priority: str
     estimated_minutes: int | None
@@ -185,8 +186,10 @@ class DayContextResponse(BaseModel):
 
 class DaySnapshotResponse(BaseModel):
     date: date
+    as_of: datetime | None = None
     focus_text: str = Field(min_length=1, max_length=180)
     progress: DayProgressResponse
+    week_progress: DayProgressResponse | None = None
     scheduled_items: list[PlanItemResponse] = Field(default_factory=list)
     unscheduled_items: list[PlanItemResponse] = Field(default_factory=list)
     completed_items: list[PlanItemResponse] = Field(default_factory=list)

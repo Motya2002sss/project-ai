@@ -1,12 +1,25 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import select
 
+from app.models.activity import (
+    LearningResource,
+    LearningSession,
+    NutritionLog,
+    WorkoutExercise,
+    WorkoutSet,
+)
+from app.models.calendar import (
+    CalendarBusyBlock,
+    CalendarSyncState,
+    TemporaryLifeMode,
+)
 from app.models.evidence import Evidence
 from app.models.goal import Goal
 from app.models.onboarding import ResourceBudget
 from app.models.program import Program
+from app.models.plan_change import PlanChange
 from app.models.task import Task
 from app.models.user import User
 from tests.test_api_v2_auth import api, bearer, begin_apple_sign_in
@@ -134,6 +147,228 @@ def test_account_export_is_owned_and_excludes_auth_secrets(api) -> None:
     assert "Other private program" not in serialized
     assert "Other private evidence note" not in serialized
     assert "Other private budget" not in serialized
+    assert owner["access_token"] not in serialized
+    assert owner["refresh_token"] not in serialized
+    assert "token_hash" not in serialized
+
+
+def test_account_export_includes_only_the_owners_activity_facts(api) -> None:
+    client, factory = api
+    owner = begin_apple_sign_in(
+        client,
+        device_id="activity-export-owner-phone",
+        identity_token="valid-identity-token-activity-export-owner",
+    )
+    other = begin_apple_sign_in(
+        client,
+        device_id="activity-export-other-phone",
+        identity_token="valid-identity-token-activity-export-other",
+    )
+
+    def seed_activity(db, user: User, label: str) -> None:
+        goal = Goal(user_id=user.id, title=f"{label} activity goal")
+        db.add(goal)
+        db.flush()
+        task = Task(
+            user_id=user.id,
+            goal_id=goal.id,
+            title=f"{label} workout task",
+            target_date=date(2026, 8, 11),
+        )
+        db.add(task)
+        db.flush()
+        exercise = WorkoutExercise(
+            user_id=user.id,
+            goal_id=goal.id,
+            task_id=task.id,
+            name=f"{label} squat",
+            position=1,
+            note=f"{label} exercise note",
+        )
+        db.add(exercise)
+        db.flush()
+        resource = LearningResource(
+            user_id=user.id,
+            goal_id=goal.id,
+            title=f"{label} private book",
+            resource_type="book",
+            note=f"{label} resource note",
+        )
+        db.add(resource)
+        db.flush()
+        db.add_all(
+            [
+                WorkoutSet(
+                    user_id=user.id,
+                    workout_exercise_id=exercise.id,
+                    position=1,
+                    planned_reps=6,
+                    actual_reps=5,
+                    completion_status="completed",
+                    note=f"{label} set note",
+                ),
+                NutritionLog(
+                    user_id=user.id,
+                    goal_id=goal.id,
+                    task_id=task.id,
+                    request_id=f"{label.lower()}-nutrition",
+                    occurred_at=datetime(2026, 8, 11, 13, 0, tzinfo=timezone.utc),
+                    meal_note=f"{label} private meal",
+                ),
+                LearningSession(
+                    user_id=user.id,
+                    goal_id=goal.id,
+                    task_id=task.id,
+                    learning_resource_id=resource.id,
+                    request_id=f"{label.lower()}-learning",
+                    occurred_at=datetime(2026, 8, 11, 19, 0, tzinfo=timezone.utc),
+                    minutes_spent=30,
+                    note=f"{label} private learning note",
+                ),
+            ]
+        )
+
+    with factory() as db:
+        owner_user = db.scalar(
+            select(User).where(User.public_id == UUID(owner["user"]["public_id"]))
+        )
+        other_user = db.scalar(
+            select(User).where(User.public_id == UUID(other["user"]["public_id"]))
+        )
+        assert owner_user is not None and other_user is not None
+        seed_activity(db, owner_user, "Owner")
+        seed_activity(db, other_user, "Other")
+        db.commit()
+
+    response = client.get(
+        "/api/v2/account/export", headers=bearer(owner["access_token"])
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["workout_exercises"]) == 1
+    assert len(payload["workout_sets"]) == 1
+    assert len(payload["nutrition_logs"]) == 1
+    assert len(payload["learning_resources"]) == 1
+    assert len(payload["learning_sessions"]) == 1
+    serialized = response.text
+    assert "Owner squat" in serialized
+    assert "Owner private meal" in serialized
+    assert "Owner private book" in serialized
+    assert "Owner private learning note" in serialized
+    assert "Other squat" not in serialized
+    assert "Other private meal" not in serialized
+    assert "Other private book" not in serialized
+    assert "Other private learning note" not in serialized
+    assert owner["access_token"] not in serialized
+    assert owner["refresh_token"] not in serialized
+
+
+def test_account_export_includes_only_owned_calendar_and_plan_change_facts(api) -> None:
+    client, factory = api
+    owner = begin_apple_sign_in(
+        client,
+        device_id="calendar-export-owner-phone",
+        identity_token="valid-identity-token-calendar-export-owner",
+    )
+    other = begin_apple_sign_in(
+        client,
+        device_id="calendar-export-other-phone",
+        identity_token="valid-identity-token-calendar-export-other",
+    )
+
+    def seed_calendar(db, user: User, label: str) -> None:
+        starts_at = datetime(2026, 8, 11, 9, 0, tzinfo=timezone.utc)
+        db.add_all(
+            [
+                CalendarBusyBlock(
+                    user_id=user.id,
+                    device_id=f"{label.lower()}-iphone",
+                    provider="apple",
+                    calendar_external_id=f"{label}-calendar",
+                    external_id=f"{label}-event",
+                    occurrence_external_id=f"{label}-occurrence",
+                    occurrence_start=starts_at,
+                    occurrence_end=starts_at + timedelta(hours=1),
+                    device_timezone="Europe/Moscow",
+                    source_revision=f"{label}-revision",
+                    last_seen_client_revision=1,
+                ),
+                CalendarSyncState(
+                    user_id=user.id,
+                    device_id=f"{label.lower()}-iphone",
+                    provider="apple",
+                    version=1,
+                    client_revision=1,
+                    range_start=starts_at - timedelta(days=1),
+                    range_end=starts_at + timedelta(days=7),
+                    device_timezone="Europe/Moscow",
+                    covered_calendar_ids=[f"{label}-calendar"],
+                    last_synced_at=starts_at,
+                ),
+                TemporaryLifeMode(
+                    user_id=user.id,
+                    request_id=f"{label.lower()}-temporary-mode",
+                    mode="travel",
+                    starts_at=starts_at,
+                    ends_at=starts_at + timedelta(days=3),
+                    status="active",
+                    constraints={"marker": f"{label} mode"},
+                ),
+                PlanChange(
+                    user_id=user.id,
+                    request_id=f"{label.lower()}-plan-change",
+                    reason="calendar_sync",
+                    status="applied",
+                    base_versions={"2026-08-11": 1},
+                    result_versions={"2026-08-11": 2},
+                    affected_dates=["2026-08-11"],
+                    forward_payload={"marker": f"{label} forward change"},
+                    inverse_payload={"marker": f"{label} inverse change"},
+                    expires_at=starts_at + timedelta(days=7),
+                ),
+            ]
+        )
+
+    with factory() as db:
+        owner_user = db.scalar(
+            select(User).where(User.public_id == UUID(owner["user"]["public_id"]))
+        )
+        other_user = db.scalar(
+            select(User).where(User.public_id == UUID(other["user"]["public_id"]))
+        )
+        assert owner_user is not None and other_user is not None
+        seed_calendar(db, owner_user, "Owner")
+        seed_calendar(db, other_user, "Other")
+        db.commit()
+
+    response = client.get(
+        "/api/v2/account/export", headers=bearer(owner["access_token"])
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload["calendar_busy_blocks"]) == 1
+    assert len(payload["calendar_sync_states"]) == 1
+    assert len(payload["temporary_life_modes"]) == 1
+    assert len(payload["plan_changes"]) == 1
+    assert all(
+        "user_id" not in item
+        for collection in (
+            payload["calendar_busy_blocks"],
+            payload["calendar_sync_states"],
+            payload["temporary_life_modes"],
+            payload["plan_changes"],
+        )
+        for item in collection
+    )
+    serialized = response.text
+    assert "Owner-calendar" in serialized
+    assert "Owner mode" in serialized
+    assert "Owner forward change" in serialized
+    assert "Other-calendar" not in serialized
+    assert "Other mode" not in serialized
+    assert "Other forward change" not in serialized
     assert owner["access_token"] not in serialized
     assert owner["refresh_token"] not in serialized
     assert "token_hash" not in serialized

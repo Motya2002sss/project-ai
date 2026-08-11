@@ -1,6 +1,6 @@
 from datetime import datetime, time
 
-from sqlalchemy import DateTime, ForeignKey, String, Time, func
+from sqlalchemy import DateTime, ForeignKey, String, Time, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -8,6 +8,14 @@ from app.db.base import Base
 
 class PlanItem(Base):
     __tablename__ = "plan_items"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "day_plan_id",
+            "task_id",
+            name="uq_plan_items_day_plan_task",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     day_plan_id: Mapped[int] = mapped_column(ForeignKey("day_plans.id", ondelete="CASCADE"), nullable=False, index=True)

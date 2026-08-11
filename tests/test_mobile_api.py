@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,8 +15,10 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
 from app.models.day_plan import DayPlan
+from app.models.task import Task
 from app.schemas.api import MessageResponse
 from app.services.idempotency_service import ReceiptReservation
+from app.services.message_service import task_to_response
 from app.services.mobile_service import message_to_mobile_response
 
 
@@ -552,3 +554,21 @@ def test_mobile_today_identifies_current_item_from_backend(
     assert snapshot["current_item"]["title"] == "Тестовый созвон"
     assert snapshot["current_item"]["start_time"] == "12:00:00"
     assert snapshot["current_item"]["end_time"] == "13:00:00"
+
+
+def test_mobile_task_response_exposes_owned_goal_link() -> None:
+    task = Task(
+        id=41,
+        user_id=7,
+        goal_id=23,
+        title="Сделать следующий шаг к цели",
+        priority="medium",
+        target_date=date(2026, 8, 11),
+        scheduling_type="flexible",
+        is_locked=False,
+        status="planned",
+    )
+
+    response = task_to_response(task)
+
+    assert response.goal_id == 23

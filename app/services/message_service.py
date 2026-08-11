@@ -1,7 +1,9 @@
+import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, time
+from datetime import date, time, timedelta
 from time import perf_counter
 from uuid import uuid4
 
@@ -128,6 +130,7 @@ def _planning_context_hint(user: User) -> str:
 def task_to_response(task: Task) -> TaskResponse:
     return TaskResponse(
         id=task.id,
+        goal_id=task.goal_id,
         title=task.title,
         priority=task.priority,
         estimated_minutes=task.estimated_minutes,
@@ -228,6 +231,19 @@ def day_snapshot_to_response(
     completed_items = [item for item in plan.items if item.status == "done"]
     current_item = None
     current_time = get_user_now(user)
+    week_start = day_plan.date - timedelta(days=day_plan.date.isoweekday() - 1)
+    week_end = week_start + timedelta(days=6)
+    week_tasks = (
+        db.query(Task)
+        .filter(
+            Task.user_id == user.id,
+            Task.target_date >= week_start,
+            Task.target_date <= week_end,
+            Task.status.in_(["planned", "done"]),
+        )
+        .all()
+    )
+    week_done_count = sum(task.status == "done" for task in week_tasks)
 
     if day_plan.date == current_time.date():
         current_clock = current_time.timetz().replace(tzinfo=None)
@@ -245,8 +261,13 @@ def day_snapshot_to_response(
 
     return DaySnapshotResponse(
         date=day_plan.date,
+        as_of=current_time,
         focus_text=plan.focus_text,
         progress=DayProgressResponse(done=done_count, total=len(tasks)),
+        week_progress=DayProgressResponse(
+            done=week_done_count,
+            total=len(week_tasks),
+        ),
         scheduled_items=scheduled_items,
         unscheduled_items=unscheduled_items,
         completed_items=completed_items,
@@ -2310,20 +2331,28 @@ def process_user_message(
     request_id: str | None = None,
     interaction_id: str | None = None,
     option_id: str | None = None,
+    _resolved_user: User | None = None,
 ) -> MessageResponse:
     started_at = perf_counter()
     normalized_request_id = (request_id or str(uuid4())).strip()[:128]
-    user = get_or_create_user_by_external_id(
+    user = _resolved_user or get_or_create_user_by_external_id(
         db=db,
         external_id=user_external_id,
         name=user_name,
         telegram_id=telegram_id,
+    )
+    request_fingerprint = _message_request_fingerprint(
+        source=source,
+        text=text,
+        interaction_id=interaction_id,
+        option_id=option_id,
     )
     reservation = reserve_message_request(
         db,
         user,
         request_id=normalized_request_id,
         source=source,
+        fingerprint=request_fingerprint,
     )
 
     if reservation.cached_response:
@@ -2505,3 +2534,48 @@ def process_user_message(
         parser_ms,
     )
     return response
+
+
+def _message_request_fingerprint(
+    *,
+    source: str,
+    text: str,
+    interaction_id: str | None,
+    option_id: str | None,
+) -> str:
+    payload = json.dumps(
+        {
+            "source": source,
+            "text": " ".join(text.split()),
+            "interaction_id": interaction_id,
+            "option_id": option_id,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def process_authenticated_user_message(
+    db: Session,
+    *,
+    user: User,
+    text: str,
+    source: MessageSource = "ios_text",
+    request_id: str | None = None,
+    interaction_id: str | None = None,
+    option_id: str | None = None,
+) -> MessageResponse:
+    """Run the message pipeline for a session-owned user without an identity selector."""
+
+    return process_user_message(
+        db=db,
+        user_external_id=f"account:{user.public_id}",
+        text=text,
+        source=source,
+        request_id=request_id,
+        interaction_id=interaction_id,
+        option_id=option_id,
+        _resolved_user=user,
+    )

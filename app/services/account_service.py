@@ -3,9 +3,22 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.activity import (
+    LearningResource,
+    LearningSession,
+    NutritionLog,
+    WorkoutExercise,
+    WorkoutSet,
+)
+from app.models.calendar import (
+    CalendarBusyBlock,
+    CalendarSyncState,
+    TemporaryLifeMode,
+)
 from app.models.evidence import Evidence, GoalProgressSnapshot, MetricObservation
 from app.models.goal import Goal
 from app.models.onboarding import OnboardingPreview, ResourceBudget
+from app.models.plan_change import PlanChange
 from app.models.program import (
     GoalMilestone,
     Program,
@@ -24,6 +37,66 @@ def export_account_data(db: Session, user: User) -> AccountExportResponse:
     ).all()
     tasks = db.scalars(
         select(Task).where(Task.user_id == user.id).order_by(Task.id)
+    ).all()
+    workout_exercises = db.scalars(
+        select(WorkoutExercise)
+        .where(WorkoutExercise.user_id == user.id)
+        .order_by(
+            WorkoutExercise.task_id,
+            WorkoutExercise.position,
+            WorkoutExercise.id,
+        )
+    ).all()
+    workout_sets = db.scalars(
+        select(WorkoutSet)
+        .where(WorkoutSet.user_id == user.id)
+        .order_by(
+            WorkoutSet.workout_exercise_id,
+            WorkoutSet.position,
+            WorkoutSet.id,
+        )
+    ).all()
+    nutrition_logs = db.scalars(
+        select(NutritionLog)
+        .where(NutritionLog.user_id == user.id)
+        .order_by(NutritionLog.occurred_at, NutritionLog.id)
+    ).all()
+    learning_resources = db.scalars(
+        select(LearningResource)
+        .where(LearningResource.user_id == user.id)
+        .order_by(LearningResource.created_at, LearningResource.id)
+    ).all()
+    learning_sessions = db.scalars(
+        select(LearningSession)
+        .where(LearningSession.user_id == user.id)
+        .order_by(LearningSession.occurred_at, LearningSession.id)
+    ).all()
+    calendar_busy_blocks = db.scalars(
+        select(CalendarBusyBlock)
+        .where(CalendarBusyBlock.user_id == user.id)
+        .order_by(
+            CalendarBusyBlock.occurrence_start,
+            CalendarBusyBlock.id,
+        )
+    ).all()
+    calendar_sync_states = db.scalars(
+        select(CalendarSyncState)
+        .where(CalendarSyncState.user_id == user.id)
+        .order_by(
+            CalendarSyncState.device_id,
+            CalendarSyncState.provider,
+            CalendarSyncState.id,
+        )
+    ).all()
+    temporary_life_modes = db.scalars(
+        select(TemporaryLifeMode)
+        .where(TemporaryLifeMode.user_id == user.id)
+        .order_by(TemporaryLifeMode.starts_at, TemporaryLifeMode.id)
+    ).all()
+    plan_changes = db.scalars(
+        select(PlanChange)
+        .where(PlanChange.user_id == user.id)
+        .order_by(PlanChange.created_at, PlanChange.id)
     ).all()
     routines = db.scalars(
         select(Routine).where(Routine.user_id == user.id).order_by(Routine.id)
@@ -116,6 +189,186 @@ def export_account_data(db: Session, user: User) -> AccountExportResponse:
                 "estimated_minutes": task.estimated_minutes,
             }
             for task in tasks
+        ],
+        workout_exercises=[
+            {
+                "id": str(exercise.id),
+                "goal_id": exercise.goal_id,
+                "task_id": exercise.task_id,
+                "program_id": (
+                    str(exercise.program_id) if exercise.program_id else None
+                ),
+                "evidence_id": (
+                    str(exercise.evidence_id) if exercise.evidence_id else None
+                ),
+                "name": exercise.name,
+                "position": exercise.position,
+                "note": exercise.note,
+                "created_at": exercise.created_at,
+                "updated_at": exercise.updated_at,
+            }
+            for exercise in workout_exercises
+        ],
+        workout_sets=[
+            {
+                "id": str(workout_set.id),
+                "workout_exercise_id": str(workout_set.workout_exercise_id),
+                "position": workout_set.position,
+                "planned_weight": workout_set.planned_weight,
+                "planned_reps": workout_set.planned_reps,
+                "planned_rpe": workout_set.planned_rpe,
+                "actual_weight": workout_set.actual_weight,
+                "actual_reps": workout_set.actual_reps,
+                "actual_rpe": workout_set.actual_rpe,
+                "weight_unit": workout_set.weight_unit,
+                "completion_status": workout_set.completion_status,
+                "note": workout_set.note,
+                "completed_at": workout_set.completed_at,
+                "created_at": workout_set.created_at,
+                "updated_at": workout_set.updated_at,
+            }
+            for workout_set in workout_sets
+        ],
+        nutrition_logs=[
+            {
+                "id": str(log.id),
+                "goal_id": log.goal_id,
+                "task_id": log.task_id,
+                "program_id": str(log.program_id) if log.program_id else None,
+                "evidence_id": str(log.evidence_id) if log.evidence_id else None,
+                "occurred_at": log.occurred_at,
+                "meal_note": log.meal_note,
+                "adherence": log.adherence,
+                "calories": log.calories,
+                "protein_grams": log.protein_grams,
+                "fat_grams": log.fat_grams,
+                "carbohydrate_grams": log.carbohydrate_grams,
+                "target_calories": log.target_calories,
+                "target_protein_grams": log.target_protein_grams,
+                "target_fat_grams": log.target_fat_grams,
+                "target_carbohydrate_grams": log.target_carbohydrate_grams,
+                "weight_observation": log.weight_observation,
+                "weight_unit": log.weight_unit,
+                "created_at": log.created_at,
+            }
+            for log in nutrition_logs
+        ],
+        learning_resources=[
+            {
+                "id": str(resource.id),
+                "goal_id": resource.goal_id,
+                "program_id": (
+                    str(resource.program_id) if resource.program_id else None
+                ),
+                "title": resource.title,
+                "resource_type": resource.resource_type,
+                "competency": resource.competency,
+                "total_pages": resource.total_pages,
+                "total_minutes": resource.total_minutes,
+                "total_exercises": resource.total_exercises,
+                "total_projects": resource.total_projects,
+                "note": resource.note,
+                "created_at": resource.created_at,
+                "updated_at": resource.updated_at,
+            }
+            for resource in learning_resources
+        ],
+        learning_sessions=[
+            {
+                "id": str(session.id),
+                "goal_id": session.goal_id,
+                "task_id": session.task_id,
+                "program_id": (
+                    str(session.program_id) if session.program_id else None
+                ),
+                "learning_resource_id": (
+                    str(session.learning_resource_id)
+                    if session.learning_resource_id
+                    else None
+                ),
+                "milestone_id": (
+                    str(session.milestone_id) if session.milestone_id else None
+                ),
+                "evidence_id": (
+                    str(session.evidence_id) if session.evidence_id else None
+                ),
+                "occurred_at": session.occurred_at,
+                "competency": session.competency,
+                "pages_completed": session.pages_completed,
+                "minutes_spent": session.minutes_spent,
+                "exercises_completed": session.exercises_completed,
+                "projects_completed": session.projects_completed,
+                "note": session.note,
+                "created_at": session.created_at,
+            }
+            for session in learning_sessions
+        ],
+        calendar_busy_blocks=[
+            {
+                "id": str(block.id),
+                "device_id": block.device_id,
+                "provider": block.provider,
+                "calendar_external_id": block.calendar_external_id,
+                "external_id": block.external_id,
+                "occurrence_external_id": block.occurrence_external_id,
+                "occurrence_start": block.occurrence_start,
+                "occurrence_end": block.occurrence_end,
+                "device_timezone": block.device_timezone,
+                "source_revision": block.source_revision,
+                "last_seen_client_revision": block.last_seen_client_revision,
+                "deleted_at": block.deleted_at,
+                "created_at": block.created_at,
+                "updated_at": block.updated_at,
+            }
+            for block in calendar_busy_blocks
+        ],
+        calendar_sync_states=[
+            {
+                "id": str(state.id),
+                "device_id": state.device_id,
+                "provider": state.provider,
+                "version": state.version,
+                "client_revision": state.client_revision,
+                "range_start": state.range_start,
+                "range_end": state.range_end,
+                "device_timezone": state.device_timezone,
+                "covered_calendar_ids": state.covered_calendar_ids,
+                "last_synced_at": state.last_synced_at,
+                "created_at": state.created_at,
+                "updated_at": state.updated_at,
+            }
+            for state in calendar_sync_states
+        ],
+        temporary_life_modes=[
+            {
+                "id": str(mode.id),
+                "request_id": mode.request_id,
+                "mode": mode.mode,
+                "starts_at": mode.starts_at,
+                "ends_at": mode.ends_at,
+                "status": mode.status,
+                "constraints": mode.constraints,
+                "created_at": mode.created_at,
+                "updated_at": mode.updated_at,
+            }
+            for mode in temporary_life_modes
+        ],
+        plan_changes=[
+            {
+                "id": str(change.id),
+                "request_id": change.request_id,
+                "reason": change.reason,
+                "status": change.status,
+                "base_versions": change.base_versions,
+                "result_versions": change.result_versions,
+                "affected_dates": change.affected_dates,
+                "forward_payload": change.forward_payload,
+                "inverse_payload": change.inverse_payload,
+                "expires_at": change.expires_at,
+                "undone_at": change.undone_at,
+                "created_at": change.created_at,
+            }
+            for change in plan_changes
         ],
         routines=[
             {

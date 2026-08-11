@@ -42,6 +42,14 @@ class MobileTaskStatusRequest(BaseModel):
     status: TaskStatus
 
 
+class MobileTaskStatusV2Request(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: TaskStatus
+    request_id: str = Field(min_length=1, max_length=128)
+    expected_plan_version: int = Field(strict=True, ge=0, le=2_147_483_647)
+
+
 class MobileActionResponse(BaseModel):
     request_id: str
     status: MessageStatus
