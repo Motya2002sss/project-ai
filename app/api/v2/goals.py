@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.v2.dependencies import AuthenticatedRequest, get_authenticated_request
@@ -44,9 +44,17 @@ from app.services.program_service import (
     apply_program_proposal,
     preview_program_proposal,
 )
+from app.schemas.path import EvidencePageResponse, GoalPathResponse, PathResponse
+from app.services.path_service import (
+    EvidenceCursorError,
+    get_goal_detail_read_model,
+    get_path_read_model,
+    list_goal_evidence_page,
+)
 
 
 router = APIRouter(prefix="/goals", tags=["goals-v2"])
+path_router = APIRouter(tags=["path-v2"])
 
 
 def _goal_or_404(db: Session, authenticated: AuthenticatedRequest, public_id: UUID) -> Goal:
@@ -60,6 +68,48 @@ def _goal_or_404(db: Session, authenticated: AuthenticatedRequest, public_id: UU
 
 def _conflict(error: ValueError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+
+
+@path_router.get("/path", response_model=PathResponse)
+def get_path(
+    authenticated: AuthenticatedRequest = Depends(get_authenticated_request),
+    db: Session = Depends(get_db),
+) -> PathResponse:
+    return get_path_read_model(db, user=authenticated.user)
+
+
+@router.get("/{public_id}", response_model=GoalPathResponse)
+def get_goal_detail(
+    public_id: UUID,
+    authenticated: AuthenticatedRequest = Depends(get_authenticated_request),
+    db: Session = Depends(get_db),
+) -> GoalPathResponse:
+    goal = _goal_or_404(db, authenticated, public_id)
+    return get_goal_detail_read_model(db, user=authenticated.user, goal=goal)
+
+
+@router.get("/{public_id}/evidence", response_model=EvidencePageResponse)
+def get_goal_evidence(
+    public_id: UUID,
+    limit: int = Query(default=20, ge=1, le=50),
+    cursor: str | None = Query(default=None, min_length=1, max_length=512),
+    authenticated: AuthenticatedRequest = Depends(get_authenticated_request),
+    db: Session = Depends(get_db),
+) -> EvidencePageResponse:
+    goal = _goal_or_404(db, authenticated, public_id)
+    try:
+        return list_goal_evidence_page(
+            db,
+            user=authenticated.user,
+            goal=goal,
+            limit=limit,
+            cursor=cursor,
+        )
+    except EvidenceCursorError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid_cursor",
+        ) from error
 
 
 @router.post("", response_model=GoalMutationResponse, status_code=status.HTTP_201_CREATED)

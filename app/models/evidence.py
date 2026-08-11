@@ -25,6 +25,13 @@ class Evidence(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "request_id", name="uq_evidence_user_request"),
         Index("ix_evidence_user_occurred", "user_id", "occurred_at"),
+        Index(
+            "ix_evidence_user_goal_occurred_id",
+            "user_id",
+            "goal_id",
+            "occurred_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -108,6 +115,14 @@ class GoalProgressSnapshot(Base):
     __table_args__ = (
         Index("ix_goal_progress_user_as_of", "user_id", "as_of"),
         Index("ix_goal_progress_goal_as_of", "goal_id", "as_of"),
+        Index(
+            "ix_goal_progress_user_goal_as_of_created_id",
+            "user_id",
+            "goal_id",
+            "as_of",
+            "created_at",
+            "id",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
