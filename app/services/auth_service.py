@@ -42,6 +42,12 @@ class SignInResult:
 
 
 @dataclass(frozen=True)
+class AuthenticatedSession:
+    user: User
+    session: AppSession
+
+
+@dataclass(frozen=True)
 class AuthChallengePair:
     state: str
     nonce: str
@@ -206,6 +212,15 @@ def authenticate_access_token(
     *,
     now: datetime | None = None,
 ) -> User:
+    return authenticate_session(db, access_token, now=now).user
+
+
+def authenticate_session(
+    db: Session,
+    access_token: str,
+    *,
+    now: datetime | None = None,
+) -> AuthenticatedSession:
     current = now or _utc_now()
     session = db.scalar(
         select(AppSession).where(
@@ -223,7 +238,7 @@ def authenticate_access_token(
         raise AuthError("invalid_access_token")
     session.last_seen_at = current
     db.commit()
-    return user
+    return AuthenticatedSession(user=user, session=session)
 
 
 def rotate_session(
