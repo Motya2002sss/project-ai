@@ -55,3 +55,16 @@ class User(Base):
     onboarding_previews = relationship(
         "OnboardingPreview", back_populates="user", cascade="all, delete-orphan"
     )
+    goal_milestones = relationship("GoalMilestone", cascade="all, delete-orphan")
+    programs = relationship("Program", cascade="all, delete-orphan")
+    program_phases = relationship("ProgramPhase", cascade="all, delete-orphan")
+    weekly_commitments = relationship(
+        "WeeklyCommitment", cascade="all, delete-orphan"
+    )
+    evidence = relationship("Evidence", cascade="all, delete-orphan")
+    metric_observations = relationship(
+        "MetricObservation", cascade="all, delete-orphan"
+    )
+    goal_progress_snapshots = relationship(
+        "GoalProgressSnapshot", cascade="all, delete-orphan"
+    )

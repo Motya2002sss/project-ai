@@ -1,6 +1,7 @@
 from datetime import date, datetime, time
+from uuid import UUID
 
-from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, String, Text, Time, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -17,6 +18,18 @@ class Task(Base):
     goal_id: Mapped[int | None] = mapped_column(ForeignKey("goals.id", ondelete="SET NULL"), nullable=True, index=True)
     routine_id: Mapped[int | None] = mapped_column(
         ForeignKey("routines.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    program_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("programs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    commitment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("weekly_commitments.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -43,4 +56,7 @@ class Task(Base):
     user = relationship("User", back_populates="tasks")
     goal = relationship("Goal", back_populates="tasks")
     routine = relationship("Routine", back_populates="occurrences")
+    program = relationship("Program", back_populates="tasks")
+    commitment = relationship("WeeklyCommitment", back_populates="tasks")
+    evidence = relationship("Evidence", back_populates="task")
     plan_items = relationship("PlanItem", back_populates="task")
