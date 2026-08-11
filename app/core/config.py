@@ -21,6 +21,17 @@ class Settings(BaseSettings):
 
     mobile_dogfood_token: str | None = None
     mobile_dogfood_user_external_id: str = "mobile:dogfood"
+    allow_dogfood_auth: bool = True
+
+    public_api_url: str | None = None
+    apple_client_id: str | None = None
+    apple_team_id: str | None = None
+    apple_jwks_url: str = "https://appleid.apple.com/auth/keys"
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 30
+    privacy_policy_url: str | None = None
+    terms_url: str | None = None
+    support_url: str | None = None
 
     plan_start_buffer_minutes: int = 30
     default_plan_start_time: str = "18:30"

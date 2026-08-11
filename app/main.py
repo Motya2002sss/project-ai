@@ -5,9 +5,11 @@ from app.api.health import router as health_router
 from app.api.mobile import router as mobile_router
 from app.api.web import router as web_router
 from app.core.config import settings
+from app.core.runtime import validate_runtime_config
 
 
 def create_app() -> FastAPI:
+    validate_runtime_config(settings)
     app = FastAPI(
         title=settings.app_name,
         debug=settings.app_debug,
