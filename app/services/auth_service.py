@@ -220,6 +220,7 @@ def authenticate_session(
     access_token: str,
     *,
     now: datetime | None = None,
+    update_last_seen: bool = True,
 ) -> AuthenticatedSession:
     current = now or _utc_now()
     session = db.scalar(
@@ -236,8 +237,9 @@ def authenticate_session(
     user = db.get(User, session.user_id)
     if user is None:
         raise AuthError("invalid_access_token")
-    session.last_seen_at = current
-    db.commit()
+    if update_last_seen:
+        session.last_seen_at = current
+        db.commit()
     return AuthenticatedSession(user=user, session=session)
 
 

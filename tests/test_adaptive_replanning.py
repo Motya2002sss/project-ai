@@ -1029,6 +1029,7 @@ def test_temporary_mode_capacity_limit_unschedules_only_excess_future_load(
 def test_api_requires_authenticated_session_and_rejects_user_selection(
     tmp_path: Path,
 ) -> None:
+    api_day = datetime.now(timezone.utc).date() + timedelta(days=1)
     engine = create_engine(
         f"sqlite+pysqlite:///{tmp_path / 'adaptive-api.db'}",
         connect_args={"check_same_thread": False},
@@ -1052,19 +1053,26 @@ def test_api_requires_authenticated_session_and_rejects_user_selection(
             json={
                 "request_id": "unauthenticated-replan",
                 "reason": "manual",
-                "affected_dates": [TODAY.isoformat()],
-                "base_versions": {TODAY.isoformat(): 0},
+                "affected_dates": [api_day.isoformat()],
+                "base_versions": {api_day.isoformat(): 0},
                 "user_id": 999,
             },
         )
 
         with factory() as db:
             user = _user(db, "api-owner")
-            task = _task(db, user, title="API задача", start=time(16), end=time(17))
+            task = _task(
+                db,
+                user,
+                title="API задача",
+                plan_date=api_day,
+                start=time(16),
+                end=time(17),
+            )
             _plan(
                 db,
                 user,
-                plan_date=TODAY,
+                plan_date=api_day,
                 version=2,
                 tasks=[(task, time(16), time(17), "planned")],
             )
@@ -1076,8 +1084,8 @@ def test_api_requires_authenticated_session_and_rejects_user_selection(
             json={
                 "request_id": "owner-selection",
                 "reason": "manual",
-                "affected_dates": [TODAY.isoformat()],
-                "base_versions": {TODAY.isoformat(): 2},
+                "affected_dates": [api_day.isoformat()],
+                "base_versions": {api_day.isoformat(): 2},
                 "user_id": 999,
             },
         )
@@ -1086,8 +1094,8 @@ def test_api_requires_authenticated_session_and_rejects_user_selection(
             json={
                 "request_id": "authenticated-replan",
                 "reason": "manual",
-                "affected_dates": [TODAY.isoformat()],
-                "base_versions": {TODAY.isoformat(): 2},
+                "affected_dates": [api_day.isoformat()],
+                "base_versions": {api_day.isoformat(): 2},
             },
         )
 

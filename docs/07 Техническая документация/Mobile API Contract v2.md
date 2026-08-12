@@ -5,7 +5,7 @@ aliases:
 type: architecture
 status: active
 area: backend
-updated: 2026-08-11
+updated: 2026-08-12
 ---
 
 # Mobile API Contract v2
@@ -163,7 +163,19 @@ Existing `/api/v2/goals` mutations remain authoritative:
 
 Every mutation is user-scoped, idempotent by request id, and returns the authoritative goal plus recalculated progress. Risky deadline, intensity, program, and deletion changes require explicit confirmation and optimistic version checks.
 
-## 6. Compatibility
+## 6. Calendar read models
+
+Authenticated calendar reads are available at:
+
+- `GET /api/v2/calendar/day?date=YYYY-MM-DD`;
+- `GET /api/v2/calendar/week?start=YYYY-MM-DD`, where `start` is Monday;
+- `GET /api/v2/calendar/month?month=YYYY-MM-01`.
+
+Day returns the persisted `DayPlan` and ordered items, privacy-safe busy intervals, and free intervals within the planner horizon (`06:00` through the user's sleep time or `23:00`). An unmaterialized day is explicit (`materialized=false`, `plan_version=null`) and a GET never creates a plan. Week always returns seven owned day summaries plus factual active-commitment load. Month returns only high-level completed milestones, goal deadlines, temporary life modes, control measurements, and aggregate tension; task titles, capture text, calendar identifiers, measurement notes, life-mode constraints, and other sensitive details are excluded.
+
+Each response includes a stable opaque `cursor` and matching `ETag`. Repeated reads do not update plan versions, materialize rows, or update session telemetry. All instants are UTC while `timezone` identifies the user's interpretation zone.
+
+## 7. Compatibility
 
 - `/api/v1` is preserved for the current local dogfood Today/Capture flow;
 - `/api/v2` uses production sessions and never accepts the shared dogfood token as identity;
@@ -171,7 +183,7 @@ Every mutation is user-scoped, idempotent by request id, and returns the authori
 - the iOS Path screen must consume `/api/v2/path` and must not derive percentages, forecast, current phase, or next step locally;
 - a cached Path response may be shown offline with its cached-state label, but it cannot be presented as a fresh server result.
 
-## 7. Errors
+## 8. Errors
 
 Common responses:
 

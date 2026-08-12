@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -150,6 +151,111 @@ class CalendarSyncStateResponse(BaseModel):
     device_timezone: str | None = None
     covered_calendar_ids: list[str] = Field(default_factory=list)
     last_synced_at: datetime | None = None
+
+
+class CalendarInterval(BaseModel):
+    start_at: datetime
+    end_at: datetime
+
+
+class CalendarDayItem(BaseModel):
+    item_id: int
+    task_id: int | None
+    title: str
+    kind: str
+    status: str
+    start_at: datetime | None
+    end_at: datetime | None
+    unscheduled_reason: str | None = None
+
+
+class CalendarDayResponse(BaseModel):
+    date: date
+    timezone: str
+    materialized: bool
+    plan_version: int | None
+    summary: str | None
+    items: list[CalendarDayItem]
+    busy_intervals: list[CalendarInterval]
+    free_intervals: list[CalendarInterval]
+    cursor: str
+
+
+class CalendarDaySummary(BaseModel):
+    date: date
+    materialized: bool
+    plan_version: int | None
+    scheduled_count: int
+    unscheduled_count: int
+    completed_count: int
+    items: list[CalendarDayItem]
+
+
+class CalendarCommitmentLoad(BaseModel):
+    commitment_id: str
+    title: str
+    target_minutes: int
+    target_sessions: int
+    scheduled_minutes: int
+    scheduled_sessions: int
+    completed_minutes: int
+    completed_sessions: int
+    remaining_minutes: int
+
+
+class CalendarWeekResponse(BaseModel):
+    start: date
+    end: date
+    timezone: str
+    days: list[CalendarDaySummary]
+    commitment_load: list[CalendarCommitmentLoad]
+    cursor: str
+
+
+class CalendarMonthMilestone(BaseModel):
+    milestone_id: str
+    goal_id: str
+    title: str
+    occurred_at: datetime
+    status: str
+
+
+class CalendarMonthDeadline(BaseModel):
+    goal_id: str
+    title: str
+    date: date
+
+
+class CalendarMonthLifeMode(BaseModel):
+    mode_id: str
+    mode: str
+    starts_at: datetime
+    ends_at: datetime
+
+
+class CalendarMonthMeasurement(BaseModel):
+    goal_id: str
+    occurred_at: datetime
+    value: Decimal
+    unit: str
+
+
+class CalendarMonthTension(BaseModel):
+    materialized_days: int
+    scheduled_minutes: int
+    unscheduled_items: int
+    busy_minutes: int
+
+
+class CalendarMonthResponse(BaseModel):
+    month: date
+    timezone: str
+    milestones: list[CalendarMonthMilestone]
+    deadlines: list[CalendarMonthDeadline]
+    life_modes: list[CalendarMonthLifeMode]
+    measurements: list[CalendarMonthMeasurement]
+    tension: CalendarMonthTension
+    cursor: str
 
 
 def _require_aware(value: datetime) -> None:

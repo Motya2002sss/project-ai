@@ -43,3 +43,24 @@ def get_authenticated_request(
         session=authenticated.session,
         access_token=credentials.credentials,
     )
+
+
+def get_authenticated_read_request(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer),
+    db: Session = Depends(get_db),
+) -> AuthenticatedRequest:
+    if credentials is None or credentials.scheme.lower() != "bearer":
+        raise invalid_credentials()
+    try:
+        authenticated = authenticate_session(
+            db,
+            credentials.credentials,
+            update_last_seen=False,
+        )
+    except AuthError as error:
+        raise invalid_credentials() from error
+    return AuthenticatedRequest(
+        user=authenticated.user,
+        session=authenticated.session,
+        access_token=credentials.credentials,
+    )
