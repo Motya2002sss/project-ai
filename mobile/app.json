@@ -17,7 +17,13 @@
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-apple-authentication"
+      "expo-apple-authentication",
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "AI Life Planner видит только занятые интервалы, чтобы не ставить задачи поверх событий. Названия и заметки календаря не отправляются."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

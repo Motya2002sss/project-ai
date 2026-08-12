@@ -14,6 +14,7 @@ import { CaptureSheet } from '../capture/CaptureSheet';
 import { usePlanner } from '../planner/PlannerProvider';
 import { buildCalendarScreenModel, type CalendarMode } from './calendarModel';
 import { useCalendarData } from './useCalendarData';
+import { useCalendarSync } from './useCalendarSync';
 
 const modes: { id: CalendarMode; label: string }[] = [
   { id: 'day', label: 'День' }, { id: 'week', label: 'Неделя' }, { id: 'month', label: 'Месяц' },
@@ -33,6 +34,7 @@ export function CalendarScreen() {
   const [mode, setMode] = useState<CalendarMode>('week');
   const { width } = useWindowDimensions();
   const { state, refresh, canRefresh } = useCalendarData(selectedDate);
+  const { state: syncState, sync } = useCalendarSync(selectedDate, refresh);
   const planner = usePlanner();
   const captureStartedHere = useRef(false);
   const model = useMemo(() => buildCalendarScreenModel({
@@ -84,6 +86,29 @@ export function CalendarScreen() {
         {model.state === 'ready' ? (
           <>
             {model.notice ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{model.notice}</Text> : null}
+            <View style={styles.syncBlock}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityState={{ disabled: syncState.status === 'syncing' }}
+                disabled={syncState.status === 'syncing'}
+                onPress={() => void sync()}
+                style={({ pressed }) => [
+                  styles.syncButton,
+                  pressed && styles.capturePressed,
+                ]}
+              >
+                <Text style={styles.syncLabel}>
+                  {syncState.status === 'syncing'
+                    ? 'Учитываю занятые интервалы…'
+                    : 'Учесть Apple Calendar'}
+                </Text>
+              </Pressable>
+              {syncState.message ? (
+                <Text accessibilityLiveRegion="polite" style={styles.syncMessage}>
+                  {syncState.message}
+                </Text>
+              ) : null}
+            </View>
             {mode !== 'month' ? (
               <>
                 <View style={styles.weekThread}>
@@ -160,6 +185,10 @@ const styles = StyleSheet.create({
   segment: { flex: 1, minHeight: spacing.touch, justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
   segmentSelected: { borderBottomColor: colors.burgundy }, segmentLabel: { ...typography.body, color: colors.muted }, segmentLabelSelected: { ...typography.bodyMedium, color: colors.ink },
   content: { flexGrow: 1, paddingBottom: 48 }, notice: { ...typography.caption, color: colors.burgundy, marginTop: spacing.md },
+  syncBlock: { marginTop: spacing.md },
+  syncButton: { minHeight: spacing.touch, alignSelf: 'flex-start', justifyContent: 'center' },
+  syncLabel: { ...typography.bodyMedium, color: colors.burgundy },
+  syncMessage: { ...typography.caption, color: colors.muted, marginTop: spacing.xs, maxWidth: 330 },
   weekThread: { minHeight: 96, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: spacing.lg, position: 'relative' },
   threadLine: { position: 'absolute', left: '7%', right: '7%', top: 39, height: StyleSheet.hairlineWidth, backgroundColor: colors.rule },
   dayButton: { width: '13.5%', minHeight: 72, alignItems: 'center', justifyContent: 'flex-start' }, dayName: { ...typography.caption, color: colors.muted }, dayNumber: { ...typography.bodyMedium, color: colors.ink, marginTop: spacing.xs }, daySelectedText: { color: colors.burgundy },

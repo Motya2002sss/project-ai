@@ -5,12 +5,16 @@ import type {
   CalendarMonthDto,
   CalendarWeekDto,
 } from '../features/calendar/calendarTypes';
+import type {
+  CalendarSyncPayload,
+  CalendarSyncTransport,
+} from '../features/calendar/calendarSyncService';
 
 export interface CalendarJsonRequester {
   request<T>(path: string, init?: RequestInit, validator?: RuntimeValidator<T>): Promise<T>;
 }
 
-export class CalendarApi {
+export class CalendarApi implements CalendarSyncTransport {
   constructor(private readonly client: CalendarJsonRequester) {}
 
   getDay(date: string): Promise<CalendarDayDto> {
@@ -28,6 +32,22 @@ export class CalendarApi {
     const value = requireDate(month);
     if (value.getUTCDate() !== 1) throw new RangeError('Month must start on day one');
     return this.client.request(`/api/v2/calendar/month?month=${month}`, undefined, isCalendarMonthDto);
+  }
+
+  getState(deviceId: string, provider: 'apple') {
+    return this.client.request(
+      `/api/v2/calendar/sync-state?device_id=${encodeURIComponent(deviceId)}&provider=${provider}`,
+      undefined,
+      isCalendarSyncStateDto,
+    );
+  }
+
+  putBusyBlocks(payload: CalendarSyncPayload) {
+    return this.client.request(
+      '/api/v2/calendar/busy-blocks',
+      { method: 'PUT', body: JSON.stringify(payload) },
+      isCalendarSyncResultDto,
+    );
   }
 }
 
@@ -113,4 +133,27 @@ function nullableInstant(value: unknown): value is string | null {
 function requireDate(value: string): Date {
   if (!validDate(value)) throw new RangeError('Expected YYYY-MM-DD');
   return new Date(`${value}T00:00:00Z`);
+}
+
+function isCalendarSyncStateDto(value: unknown): value is {
+  status: 'not_started' | 'ready';
+  version: number;
+  client_revision: number;
+  covered_calendar_ids: string[];
+} {
+  return record(value) &&
+    (value.status === 'not_started' || value.status === 'ready') &&
+    integer(value.version) && integer(value.client_revision) &&
+    Array.isArray(value.covered_calendar_ids) && value.covered_calendar_ids.every(text);
+}
+
+function isCalendarSyncResultDto(value: unknown): value is {
+  version: number;
+  client_revision: number;
+  affected_dates: string[];
+  replan_required: boolean;
+} {
+  return record(value) && integer(value.version) && integer(value.client_revision) &&
+    Array.isArray(value.affected_dates) && value.affected_dates.every(validDate) &&
+    typeof value.replan_required === 'boolean';
 }
