@@ -21,12 +21,23 @@ export interface JsonRequester {
   ): Promise<T>;
 }
 
+interface PlannerApiOptions {
+  apiPrefix?: '/api/v1' | '/api/v2';
+}
+
 export class PlannerApi {
-  constructor(private readonly client: JsonRequester) {}
+  private readonly apiPrefix: '/api/v1' | '/api/v2';
+
+  constructor(
+    private readonly client: JsonRequester,
+    options: PlannerApiOptions = {},
+  ) {
+    this.apiPrefix = options.apiPrefix ?? '/api/v1';
+  }
 
   getToday(): Promise<DaySnapshotDto> {
     return this.client.request<DaySnapshotDto>(
-      '/api/v1/today',
+      `${this.apiPrefix}/today`,
       undefined,
       isDaySnapshotDto,
     );
@@ -34,7 +45,7 @@ export class PlannerApi {
 
   capture(request: CaptureRequestDto): Promise<MobileActionResponseDto> {
     return this.client.request<MobileActionResponseDto>(
-      '/api/v1/capture',
+      `${this.apiPrefix}/capture`,
       {
         method: 'POST',
         body: JSON.stringify(request),
@@ -48,7 +59,7 @@ export class PlannerApi {
     request: InteractionResponseRequestDto,
   ): Promise<MobileActionResponseDto> {
     return this.client.request<MobileActionResponseDto>(
-      `/api/v1/interactions/${encodeURIComponent(interactionId)}/responses`,
+      `${this.apiPrefix}/interactions/${encodeURIComponent(interactionId)}/responses`,
       { method: 'POST', body: JSON.stringify(request) },
       isMobileActionResponseDto,
     );
@@ -57,10 +68,22 @@ export class PlannerApi {
   setTaskStatus(
     taskId: number,
     status: TaskStatus,
+    mutation?: { requestId: string; expectedPlanVersion: number },
   ): Promise<MobileTaskMutationResponseDto> {
+    if (this.apiPrefix === '/api/v2' && !mutation) {
+      throw new Error('Versioned task mutation metadata is required');
+    }
+    const body =
+      this.apiPrefix === '/api/v2'
+        ? {
+            status,
+            request_id: mutation!.requestId,
+            expected_plan_version: mutation!.expectedPlanVersion,
+          }
+        : { status };
     return this.client.request<MobileTaskMutationResponseDto>(
-      `/api/v1/tasks/${taskId}/status`,
-      { method: 'PATCH', body: JSON.stringify({ status }) },
+      `${this.apiPrefix}/tasks/${taskId}/status`,
+      { method: 'PATCH', body: JSON.stringify(body) },
       isMobileTaskMutationResponseDto,
     );
   }

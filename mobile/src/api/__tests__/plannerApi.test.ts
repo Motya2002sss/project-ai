@@ -48,4 +48,61 @@ describe('PlannerApi mobile v1 boundary', () => {
       ],
     ]);
   });
+
+  it('uses the production session routes when explicitly configured', async () => {
+    const calls: [string, RequestInit?][] = [];
+    const client: JsonRequester = {
+      async request<T>(path: string, init?: RequestInit): Promise<T> {
+        calls.push([path, init]);
+        return { ok: true } as T;
+      },
+    };
+    const api = new PlannerApi(client, { apiPrefix: '/api/v2' });
+
+    await api.getToday();
+    await api.capture({ request_id: 'capture-v2', text: 'Изменение' });
+    await api.respondToInteraction('interaction-v2', {
+      request_id: 'answer-v2',
+      option_id: 'apply',
+    });
+    await api.setTaskStatus(7, 'done', {
+      requestId: 'task-status-v2',
+      expectedPlanVersion: 4,
+    });
+
+    expect(calls).toEqual([
+      ['/api/v2/today', undefined],
+      [
+        '/api/v2/capture',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            request_id: 'capture-v2',
+            text: 'Изменение',
+          }),
+        },
+      ],
+      [
+        '/api/v2/interactions/interaction-v2/responses',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            request_id: 'answer-v2',
+            option_id: 'apply',
+          }),
+        },
+      ],
+      [
+        '/api/v2/tasks/7/status',
+        {
+          method: 'PATCH',
+          body: JSON.stringify({
+            status: 'done',
+            request_id: 'task-status-v2',
+            expected_plan_version: 4,
+          }),
+        },
+      ],
+    ]);
+  });
 });

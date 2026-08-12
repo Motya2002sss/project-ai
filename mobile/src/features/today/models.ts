@@ -1,5 +1,15 @@
 export type TodayState = 'normal' | 'empty' | 'allDone';
-export type TimelineVariant = 'current' | 'upcoming' | 'completed';
+export type TimelineVariant = 'past' | 'current' | 'upcoming' | 'completed';
+export type TimelineItemKind =
+  | 'anchor'
+  | 'fixed'
+  | 'action'
+  | 'meal'
+  | 'commute'
+  | 'free'
+  | 'recovery'
+  | 'sleep'
+  | 'other';
 
 export interface TimelineRowModel {
   id: number;
@@ -9,7 +19,9 @@ export interface TimelineRowModel {
   endTime: string | null;
   label: string | null;
   meta: string | null;
+  goalContext: string | null;
   itemType: string;
+  kind: TimelineItemKind;
   variant: TimelineVariant;
   isCompletable: boolean;
 }
@@ -23,5 +35,9 @@ export interface TodayModel {
   unscheduled: TimelineRowModel[];
   completedCount: number;
   totalCount: number;
+  progressLabel: string;
+  progressFraction: number;
+  weekProgressLabel: string | null;
+  directionTitles: string[];
   planVersion: number;
 }

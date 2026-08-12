@@ -1,3 +1,4 @@
+import { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import type { TaskStatus } from '../../../api/types';
@@ -14,6 +15,7 @@ interface TimelineProps {
   >;
   onOpenTask: (taskId: number) => void;
   onToggleTask: (taskId: number, completed: boolean) => void;
+  onCurrentRowLayout?: (y: number) => void;
 }
 
 export function Timeline({
@@ -21,20 +23,66 @@ export function Timeline({
   pendingByTask,
   onOpenTask,
   onToggleTask,
+  onCurrentRowLayout,
 }: TimelineProps) {
+  const rootYRef = useRef<number | null>(null);
+  const timelineYRef = useRef<number | null>(null);
+  const currentRowRef = useRef<{ id: number; y: number } | null>(null);
+  const currentRowId = model.rows.find((row) => row.variant === 'current')?.id;
+  const emitCurrentRowLayout = useCallback(() => {
+    const currentRow = currentRowRef.current;
+    if (
+      !onCurrentRowLayout ||
+      currentRowId === undefined ||
+      currentRow?.id !== currentRowId ||
+      rootYRef.current === null ||
+      timelineYRef.current === null
+    ) {
+      return;
+    }
+    onCurrentRowLayout(rootYRef.current + timelineYRef.current + currentRow.y);
+  }, [currentRowId, onCurrentRowLayout]);
+
+  useEffect(() => {
+    emitCurrentRowLayout();
+  }, [emitCurrentRowLayout]);
+
   return (
-    <View accessibilityLabel="План на день">
+    <View
+      accessibilityLabel="План на день"
+      onLayout={(event) => {
+        rootYRef.current = event.nativeEvent.layout.y;
+        emitCurrentRowLayout();
+      }}
+    >
       <View style={styles.heading}>
         <Text style={styles.headingTitle}>День</Text>
         {model.dayRange ? <Text style={styles.range}>{model.dayRange}</Text> : null}
       </View>
-      <View style={styles.timeline}>
+      <View
+        onLayout={(event) => {
+          timelineYRef.current = event.nativeEvent.layout.y;
+          emitCurrentRowLayout();
+        }}
+        style={styles.timeline}
+      >
         {model.rows.length > 0 ? <View style={styles.line} /> : null}
         {model.rows.map((row) => (
           <TimelineRow
             key={row.id}
             row={row}
             pending={row.taskId !== null && Boolean(pendingByTask[row.taskId])}
+            onLayout={
+              row.variant === 'current' && onCurrentRowLayout
+                ? (event) => {
+                    currentRowRef.current = {
+                      id: row.id,
+                      y: event.nativeEvent.layout.y,
+                    };
+                    emitCurrentRowLayout();
+                  }
+                : undefined
+            }
             onOpen={onOpenTask}
             onToggle={onToggleTask}
           />
@@ -76,7 +124,8 @@ const styles = StyleSheet.create({
     bottom: 26,
     left: 69,
     width: StyleSheet.hairlineWidth,
-    backgroundColor: colors.rule,
+    backgroundColor: colors.burgundy,
+    opacity: 0.34,
   },
   unscheduled: { marginTop: spacing.lg },
   unscheduledTitle: {

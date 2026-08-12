@@ -87,14 +87,16 @@ Authenticated export включает собственный профиль, goa
 
 ## Mobile storage boundary
 
-Native SecureStore содержит ровно два значения:
+Native SecureStore содержит один versioned envelope:
 
 ```text
-ai-life-planner.access-token.v1
-ai-life-planner.refresh-token.v1
+ai-life-planner.session.v2
+→ {version, publicUserId, accessToken, refreshToken}
 ```
 
-Public user UUID хранится отдельно в AsyncStorage только как namespace для cold-start cleanup. Today cache, capture draft и будущие goals/calendar/onboarding caches используют ключи с `publicUserId`. Logout, revoked session и успешное account deletion очищают credential pair, public scope и все известные ключи только этого пользователя.
+Public user UUID атомарно связан с обоими credentials в той же SecureStore-записи. AsyncStorage не является источником identity: Today cache, capture draft и goals/calendar/onboarding caches используют user-scoped keys, но открыть их offline можно только для `publicUserId` из валидного текущего envelope. Logout, proven revocation и успешное account deletion очищают envelope и известные ключи только связанного пользователя.
+
+Legacy `access-token.v1 + refresh-token.v1` читается как unbound session: stale public scope из AsyncStorage не используется. Новый envelope создаётся одним SecureStore write только после успешного authoritative `/api/v2/me`; malformed или partial legacy/current state fail-closed и не раскрывает чужой cache. SecureStore и startup token reads имеют bounded deadline, а auth epoch с сериализованными secure mutations не разрешает позднему refresh/sign-in перезаписать logout, deletion или более новую account session.
 
 Legacy P0 cache переносится только в явный `dogfood` namespace. Production session никогда не импортирует legacy snapshot/draft. Dogfood token недоступен в production build.
 
@@ -109,7 +111,7 @@ Automated locally:
 - logout and revoke-all;
 - owned export and cascading deletion;
 - onboarding preview/apply ownership and idempotency;
-- SecureStore pair integrity, single-flight refresh and user-scoped cache isolation.
+- atomic SecureStore envelope, safe unbound legacy migration, single-flight refresh, auth race suppression and user-scoped cache isolation.
 
 Required outside local environment:
 
@@ -126,5 +128,6 @@ Required outside local environment:
 - Never persist raw credentials server-side.
 - Never accept client-selected user identity.
 - Never reuse a refresh credential after rotation.
+- Never derive offline identity from an AsyncStorage scope or an unbound legacy credential pair.
 - Never migrate dogfood data into a production account.
 - Never report local automated verification as staging, TestFlight or App Store verification.

@@ -50,6 +50,7 @@ export interface PlanDto {
 
 export interface TaskDto {
   id: number;
+  goal_id?: number | null;
   title: string;
   priority: string;
   estimated_minutes: number | null;
@@ -90,8 +91,10 @@ export interface RoutineDto {
 
 export interface DaySnapshotDto {
   date: string;
+  as_of?: string | null;
   focus_text: string;
   progress: DayProgressDto;
+  week_progress?: DayProgressDto | null;
   scheduled_items: PlanItemDto[];
   unscheduled_items: PlanItemDto[];
   completed_items: PlanItemDto[];
@@ -191,4 +194,6 @@ export interface InteractionResponseRequestDto {
 
 export interface TaskStatusRequestDto {
   status: TaskStatus;
+  request_id: string;
+  expected_plan_version: number;
 }

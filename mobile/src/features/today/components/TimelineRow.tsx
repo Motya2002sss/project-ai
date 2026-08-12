@@ -1,4 +1,10 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  type LayoutChangeEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { colors } from '../../../theme/colors';
 import { radius } from '../../../theme/radius';
@@ -11,6 +17,7 @@ interface TimelineRowProps {
   pending: boolean;
   onOpen: (taskId: number) => void;
   onToggle: (taskId: number, completed: boolean) => void;
+  onLayout?: (event: LayoutChangeEvent) => void;
 }
 
 export function TimelineRow({
@@ -18,12 +25,20 @@ export function TimelineRow({
   pending,
   onOpen,
   onToggle,
+  onLayout,
 }: TimelineRowProps) {
   const completed = row.variant === 'completed';
   const current = row.variant === 'current';
+  const past = row.variant === 'past';
   return (
-    <View style={[styles.row, current && styles.currentRow]}>
-      <Text style={styles.time}>{row.time ?? '—'}</Text>
+    <View
+      onLayout={onLayout}
+      style={[styles.row, current && styles.currentRow, past && styles.pastRow]}
+    >
+      {current ? <View accessibilityElementsHidden style={styles.nowMarker} /> : null}
+      <Text style={[styles.time, current && styles.currentTime]}>
+        {row.time ?? '—'}
+      </Text>
       <View style={styles.markerColumn}>
         {row.isCompletable && row.taskId !== null ? (
           <Pressable
@@ -47,7 +62,17 @@ export function TimelineRow({
             </View>
           </Pressable>
         ) : (
-          <View style={styles.checkTarget} />
+          <View style={styles.checkTarget}>
+            {row.time ? (
+              <View
+                accessibilityElementsHidden
+                style={[
+                  styles.passiveMarker,
+                  current && styles.currentPassiveMarker,
+                ]}
+              />
+            ) : null}
+          </View>
         )}
       </View>
       {row.taskId !== null ? (
@@ -63,6 +88,17 @@ export function TimelineRow({
           ]}
         >
           {row.label ? <Text style={styles.label}>{row.label}</Text> : null}
+          {row.goalContext ? (
+            <Text
+              style={[
+                styles.goalContext,
+                current && styles.currentGoalContext,
+                completed && styles.completedText,
+              ]}
+            >
+              {row.goalContext}
+            </Text>
+          ) : null}
           <Text
             style={[
               styles.title,
@@ -79,7 +115,8 @@ export function TimelineRow({
           ) : null}
         </Pressable>
       ) : (
-        <View style={styles.content}>
+        <View style={[styles.content, current && styles.currentContent]}>
+          {row.label ? <Text style={styles.label}>{row.label}</Text> : null}
           <Text style={[styles.title, styles.freeText]}>{row.title}</Text>
           {row.meta ? <Text style={styles.meta}>{row.meta}</Text> : null}
         </View>
@@ -95,6 +132,16 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   currentRow: { minHeight: 98 },
+  nowMarker: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    left: 68,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.burgundy,
+    opacity: 0.46,
+  },
+  pastRow: { opacity: 0.55 },
   time: {
     ...typography.caption,
     ...typography.tabular,
@@ -102,6 +149,7 @@ const styles = StyleSheet.create({
     color: colors.muted,
     paddingTop: 1,
   },
+  currentTime: { color: colors.burgundy, fontWeight: '500' },
   markerColumn: { width: spacing.touch, alignItems: 'center' },
   checkTarget: {
     width: spacing.touch,
@@ -127,6 +175,20 @@ const styles = StyleSheet.create({
     borderRadius: radius.round,
     backgroundColor: colors.burgundy,
   },
+  passiveMarker: {
+    width: 7,
+    height: 7,
+    borderRadius: radius.round,
+    borderWidth: 1,
+    borderColor: colors.rule,
+    backgroundColor: colors.paper,
+  },
+  currentPassiveMarker: {
+    width: 9,
+    height: 9,
+    borderColor: colors.burgundy,
+    backgroundColor: colors.burgundy,
+  },
   completedCheck: {
     borderColor: colors.ink,
     backgroundColor: colors.ink,
@@ -148,7 +210,7 @@ const styles = StyleSheet.create({
     paddingBottom: 12,
     paddingLeft: 10,
     borderBottomWidth: 0,
-    borderLeftWidth: 2,
+    borderLeftWidth: StyleSheet.hairlineWidth,
     borderLeftColor: colors.burgundy,
     borderRadius: radius.control,
     backgroundColor: colors.softBurgundy,
@@ -162,6 +224,12 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginBottom: 5,
   },
+  goalContext: {
+    ...typography.caption,
+    color: colors.muted,
+    marginBottom: 3,
+  },
+  currentGoalContext: { color: colors.burgundy },
   title: { ...typography.rowTitle, color: colors.ink },
   currentTitle: { ...typography.currentTitle, color: colors.ink },
   meta: { ...typography.body, color: colors.muted, marginTop: 4 },

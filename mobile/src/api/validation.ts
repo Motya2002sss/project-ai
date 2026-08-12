@@ -70,6 +70,7 @@ function isTaskDto(value: unknown): value is TaskDto {
   if (!isRecord(value)) return false;
   return (
     isNumber(value.id) &&
+    (value.goal_id === undefined || isNullableNumber(value.goal_id)) &&
     isString(value.title) &&
     isString(value.priority) &&
     isNullableNumber(value.estimated_minutes) &&
@@ -137,9 +138,17 @@ export function isDaySnapshotDto(value: unknown): value is DaySnapshotDto {
   if (!isRecord(value.progress) || !isRecord(value.day_context)) return false;
   return (
     isString(value.date) &&
+    (value.as_of === undefined ||
+      value.as_of === null ||
+      isString(value.as_of)) &&
     isString(value.focus_text) &&
     isNumber(value.progress.done) &&
     isNumber(value.progress.total) &&
+    (value.week_progress === undefined ||
+      value.week_progress === null ||
+      (isRecord(value.week_progress) &&
+        isNumber(value.week_progress.done) &&
+        isNumber(value.week_progress.total))) &&
     isArrayOf(value.scheduled_items, isPlanItemDto) &&
     isArrayOf(value.unscheduled_items, isPlanItemDto) &&
     isArrayOf(value.completed_items, isPlanItemDto) &&

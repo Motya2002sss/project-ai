@@ -21,6 +21,43 @@ describe('mobile API runtime validation', () => {
     ).toBe(false);
   });
 
+  it('validates the optional task-to-goal link used by Today context', () => {
+    const linked = {
+      ...normalDaySnapshot,
+      tasks: normalDaySnapshot.tasks.map((task, index) => ({
+        ...task,
+        goal_id: index === 0 ? 42 : null,
+      })),
+    };
+
+    expect(isDaySnapshotDto(linked)).toBe(true);
+    expect(
+      isDaySnapshotDto({
+        ...linked,
+        tasks: [{ ...linked.tasks[0], goal_id: 'another-user-goal' }],
+      }),
+    ).toBe(false);
+  });
+
+  it('validates snapshot time and weekly progress when the server provides them', () => {
+    expect(
+      isDaySnapshotDto({
+        ...normalDaySnapshot,
+        as_of: '2026-08-11T19:45:00+03:00',
+        week_progress: { done: 3, total: 7 },
+      }),
+    ).toBe(true);
+    expect(
+      isDaySnapshotDto({ ...normalDaySnapshot, as_of: 42 }),
+    ).toBe(false);
+    expect(
+      isDaySnapshotDto({
+        ...normalDaySnapshot,
+        week_progress: { done: '3', total: 7 },
+      }),
+    ).toBe(false);
+  });
+
   it('validates action and task mutation envelopes including nested snapshots', () => {
     const action = {
       request_id: 'capture-1',

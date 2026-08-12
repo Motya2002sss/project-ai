@@ -8,17 +8,22 @@ import {
   useReducer,
   useRef,
 } from 'react';
+import { Platform } from 'react-native';
 
 import {
   AuthApi,
   AuthApiError,
+  AuthOperationCoordinator,
+  finalizeProvenSessionRevocation,
+  isProvenSessionRevocation,
   type AppleSignInInput,
   SessionRefreshCoordinator,
 } from '../../api/authApi';
 import { apiBaseUrl } from '../../config/environment';
 import { clearUserData } from '../../storage/mobileStorage';
 import {
-  sessionScopeStorage,
+  type LoadedSession,
+  type SessionCredentials,
   sessionVault,
 } from '../../storage/sessionStorage';
 import {
@@ -27,9 +32,16 @@ import {
   type AuthState,
   type AuthenticatedUser,
 } from './authReducer';
+import {
+  cachedIdentityForScope,
+  loadCredentialsForPlatform,
+} from './sessionHydrationPolicy';
 
 interface AuthContextValue {
   state: AuthState;
+  createAppleChallenge: (
+    deviceId: string,
+  ) => Promise<{ state: string; nonce: string }>;
   signInWithApple: (input: AppleSignInInput) => Promise<void>;
   getAccessToken: () => Promise<string | null>;
   recoverAuthentication: () => Promise<string | null>;
@@ -41,30 +53,54 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = useReducer(authReducer, initialAuthState);
-  const userRef = useRef<AuthenticatedUser | null>(null);
-  userRef.current = state.user;
+  const lifecycleRef = useRef(new AuthOperationCoordinator());
+  const pendingUnboundRefreshRef = useRef<{
+    epoch: number;
+    credentials: SessionCredentials;
+  } | null>(null);
   const api = useMemo(() => new AuthApi({ baseUrl: apiBaseUrl }), []);
 
   const performRefresh = useCallback(async (): Promise<string | null> => {
-    const credentials = await sessionVault.load();
-    if (!credentials) return null;
-    dispatch({ type: 'refresh/started' });
+    const lifecycle = lifecycleRef.current;
+    const epoch = lifecycle.captureRecoveryEpoch();
+    if (epoch === null) return null;
+    let session: LoadedSession | null = null;
     try {
-      const rotated = await api.refresh(credentials.refreshToken);
-      await sessionVault.save(rotated);
-      const currentUser = userRef.current;
-      if (currentUser) {
-        dispatch({ type: 'refresh/succeeded', user: currentUser });
+      session = await sessionVault.load();
+      if (!lifecycle.isCurrent(epoch)) return null;
+      if (!session) {
+        dispatch({
+          type: 'session/expired',
+          message: 'Сессия недоступна. Данные на устройстве сохранены.',
+        });
+        return null;
       }
+      dispatch({ type: 'refresh/started' });
+      const rotated = await api.refresh(session.credentials.refreshToken);
+      if (!lifecycle.isCurrent(epoch)) return null;
+      if (session.source === 'current' && session.publicUserId) {
+        const commit = await lifecycle.runIfCurrent(epoch, () =>
+          sessionVault.save(session!.publicUserId!, rotated),
+        );
+        if (!commit.current) return null;
+      } else {
+        pendingUnboundRefreshRef.current = { epoch, credentials: rotated };
+      }
+      if (!lifecycle.isCurrent(epoch)) return null;
+      dispatch({ type: 'refresh/succeeded' });
       return rotated.accessToken;
     } catch (error) {
-      if (error instanceof AuthApiError && error.status === 401) {
+      if (!lifecycle.isCurrent(epoch)) return null;
+      if (isProvenSessionRevocation(error)) {
         const scope =
-          userRef.current?.publicId ?? (await sessionScopeStorage.load());
-        await sessionVault.clear();
-        if (scope) await clearUserData(scope);
-        await sessionScopeStorage.clear();
-        dispatch({ type: 'session/revoked' });
+          session?.source === 'current' ? session.publicUserId : null;
+        pendingUnboundRefreshRef.current = null;
+        if (scope) void clearUserData(scope).catch(() => undefined);
+        await finalizeProvenSessionRevocation(
+          lifecycle,
+          () => sessionVault.clear(),
+          () => dispatch({ type: 'session/revoked' }),
+        );
         return null;
       }
       dispatch({
@@ -82,93 +118,239 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     let active = true;
-    void (async () => {
-      const [credentials, storedScope] = await Promise.all([
-        sessionVault.load(),
-        sessionScopeStorage.load(),
-      ]);
-      if (!active) return;
-      if (!credentials) {
-        if (storedScope) await clearUserData(storedScope);
-        await sessionScopeStorage.clear();
-        dispatch({ type: 'hydrate/unauthenticated' });
+    const lifecycle = lifecycleRef.current;
+    const hydrationEpoch = lifecycle.currentEpoch();
+    let fallbackUser: AuthenticatedUser | null = null;
+    const canPublish = () =>
+      active && lifecycle.isCurrent(hydrationEpoch);
+    const hydration = (async () => {
+      let credentialStorageUnavailable = false;
+      const session = await loadCredentialsForPlatform(
+        Platform.OS,
+        () => sessionVault.load(),
+        () => {
+          credentialStorageUnavailable = true;
+        },
+      );
+      if (!canPublish()) return;
+      if (!session) {
+        if (credentialStorageUnavailable) {
+          dispatch({
+            type: 'session/expired',
+            message:
+              'Не удалось прочитать сессию. Данные на устройстве сохранены.',
+            user: null,
+          });
+        } else {
+          dispatch({ type: 'hydrate/unauthenticated' });
+        }
         return;
       }
+      fallbackUser = cachedIdentityForScope(
+        session.publicUserId,
+        session.source,
+      );
       try {
-        const user = await api.me(credentials.accessToken);
-        await sessionScopeStorage.save(user.publicId);
-        if (active) dispatch({ type: 'hydrate/authenticated', user });
-      } catch (error) {
-        if (!(error instanceof AuthApiError) || error.status !== 401) {
-          if (active) {
-            dispatch({
-              type: 'session/expired',
-              message: 'Не удалось проверить сессию. Данные на устройстве сохранены.',
-            });
-          }
+        const user = await api.me(session.credentials.accessToken);
+        if (!canPublish()) return;
+        const commit = await lifecycle.runIfCurrent(
+          hydrationEpoch,
+          async () => {
+            if (
+              session.source === 'legacy' ||
+              session.publicUserId !== user.publicId
+            ) {
+              await sessionVault.save(user.publicId, session.credentials);
+            }
+          },
+        );
+        if (
+          !active ||
+          !commit.current ||
+          !lifecycle.authorizeRecovery(hydrationEpoch)
+        ) {
           return;
         }
+        dispatch({ type: 'hydrate/authenticated', user });
+      } catch (error) {
+        if (!canPublish()) return;
+        if (!isProvenSessionRevocation(error)) {
+          dispatch({
+            type: 'session/expired',
+            message: 'Не удалось проверить сессию. Данные на устройстве сохранены.',
+            user: fallbackUser,
+          });
+          return;
+        }
+        if (fallbackUser && canPublish()) {
+          dispatch({
+            type: 'session/expired',
+            message: 'Обновляю сессию. Данные на устройстве сохранены.',
+            user: fallbackUser,
+          });
+        }
         const accessToken = await refreshCoordinator.refresh();
-        if (!active || !accessToken) return;
+        if (!canPublish() || !accessToken) return;
         try {
           const user = await api.me(accessToken);
-          await sessionScopeStorage.save(user.publicId);
-          if (active) dispatch({ type: 'hydrate/authenticated', user });
-        } catch {
-          await sessionVault.clear();
-          if (storedScope) await clearUserData(storedScope);
-          await sessionScopeStorage.clear();
-          if (active) dispatch({ type: 'session/revoked' });
+          if (!canPublish()) return;
+          const pending = pendingUnboundRefreshRef.current;
+          const latestSession =
+            pending?.epoch === hydrationEpoch
+              ? null
+              : await sessionVault.load();
+          if (!canPublish()) return;
+          const credentials =
+            pending?.epoch === hydrationEpoch
+              ? pending.credentials
+              : latestSession?.credentials ?? null;
+          if (!credentials) {
+            dispatch({
+              type: 'session/expired',
+              message:
+                'Не удалось сохранить сессию. Данные на устройстве сохранены.',
+              user: fallbackUser,
+            });
+            return;
+          }
+          const commit = await lifecycle.runIfCurrent(hydrationEpoch, () =>
+            sessionVault.save(user.publicId, credentials),
+          );
+          if (
+            !active ||
+            !commit.current ||
+            !lifecycle.authorizeRecovery(hydrationEpoch)
+          ) {
+            return;
+          }
+          if (pending?.epoch === hydrationEpoch) {
+            pendingUnboundRefreshRef.current = null;
+          }
+          dispatch({ type: 'hydrate/authenticated', user });
+        } catch (refreshError) {
+          if (!canPublish()) return;
+          if (isProvenSessionRevocation(refreshError)) {
+            const scope =
+              session.source === 'current' ? session.publicUserId : null;
+            pendingUnboundRefreshRef.current = null;
+            if (scope) void clearUserData(scope).catch(() => undefined);
+            await finalizeProvenSessionRevocation(
+              lifecycle,
+              () => sessionVault.clear(),
+              () => {
+                if (active) dispatch({ type: 'session/revoked' });
+              },
+            );
+            return;
+          }
+          dispatch({
+            type: 'session/expired',
+            message:
+              'Не удалось проверить сессию. Данные на устройстве сохранены.',
+            user: fallbackUser,
+          });
         }
       }
     })();
+    void hydration.catch(() => {
+      if (canPublish()) {
+        dispatch({
+          type: 'session/expired',
+          message: 'Не удалось проверить сессию. Данные на устройстве сохранены.',
+          user: fallbackUser,
+        });
+      }
+    });
     return () => {
       active = false;
+      pendingUnboundRefreshRef.current = null;
+      lifecycle.blockRecovery();
     };
   }, [api, refreshCoordinator]);
 
   const signInWithApple = useCallback(
     async (input: AppleSignInInput) => {
+      const lifecycle = lifecycleRef.current;
+      const epoch = lifecycle.invalidate();
+      pendingUnboundRefreshRef.current = null;
       const signedIn = await api.signInWithApple(input);
-      await sessionVault.save(signedIn.credentials);
-      await sessionScopeStorage.save(signedIn.user.publicId);
+      if (!lifecycle.isCurrent(epoch)) return;
+      const commit = await lifecycle.runIfCurrent(epoch, () =>
+        sessionVault.save(signedIn.user.publicId, signedIn.credentials),
+      );
+      if (!commit.current || !lifecycle.authorizeRecovery(epoch)) return;
       dispatch({ type: 'session/authenticated', user: signedIn.user });
     },
     [api],
   );
 
   const getAccessToken = useCallback(async () => {
-    return (await sessionVault.load())?.accessToken ?? null;
+    return (await sessionVault.load())?.credentials.accessToken ?? null;
   }, []);
 
   const logout = useCallback(async () => {
-    const credentials = await sessionVault.load();
-    const scope =
-      userRef.current?.publicId ?? (await sessionScopeStorage.load());
-    if (credentials) {
-      await api.logout(credentials.accessToken).catch(() => undefined);
+    const lifecycle = lifecycleRef.current;
+    const epoch = lifecycle.blockRecovery();
+    pendingUnboundRefreshRef.current = null;
+    let localSession: LoadedSession | null = null;
+    try {
+      const cleared = await lifecycle.runIfCurrent(epoch, async () => {
+        const session = await sessionVault.load();
+        await sessionVault.clear();
+        return session;
+      });
+      if (!cleared.current) return;
+      localSession = cleared.value;
+    } catch {
+      if (lifecycle.isCurrent(epoch)) {
+        dispatch({
+          type: 'session/expired',
+          message: 'Не удалось завершить выход. Попробуйте ещё раз.',
+        });
+      }
+      return;
     }
-    await sessionVault.clear();
-    if (scope) await clearUserData(scope);
-    await sessionScopeStorage.clear();
+    const scope =
+      localSession?.source === 'current' ? localSession.publicUserId : null;
+    if (scope) void clearUserData(scope).catch(() => undefined);
     dispatch({ type: 'logout/completed' });
+    if (localSession) {
+      await api
+        .logout(localSession.credentials.accessToken)
+        .catch(() => undefined);
+    }
   }, [api]);
 
   const deleteAccount = useCallback(async () => {
-    const credentials = await sessionVault.load();
-    if (!credentials) throw new AuthApiError(401);
+    const lifecycle = lifecycleRef.current;
+    const epoch = lifecycle.blockRecovery();
+    pendingUnboundRefreshRef.current = null;
+    const loaded = await lifecycle.runIfCurrent(epoch, () =>
+      sessionVault.load(),
+    );
+    if (!loaded.current) return;
+    const session = loaded.value;
+    if (!session) throw new AuthApiError(401);
+    await api.deleteAccount(session.credentials.accessToken);
     const scope =
-      userRef.current?.publicId ?? (await sessionScopeStorage.load());
-    await api.deleteAccount(credentials.accessToken);
-    await sessionVault.clear();
-    if (scope) await clearUserData(scope);
-    await sessionScopeStorage.clear();
+      session.source === 'current' ? session.publicUserId : null;
+    if (scope) void clearUserData(scope).catch(() => undefined);
+    if (!lifecycle.isCurrent(epoch)) return;
+    try {
+      const cleared = await lifecycle.runIfCurrent(epoch, () =>
+        sessionVault.clear(),
+      );
+      if (!cleared.current) return;
+    } catch {
+      if (!lifecycle.isCurrent(epoch)) return;
+    }
     dispatch({ type: 'account/deleted' });
   }, [api]);
 
   const value = useMemo<AuthContextValue>(
     () => ({
       state,
+      createAppleChallenge: (deviceId) => api.challenge(deviceId),
       signInWithApple,
       getAccessToken,
       recoverAuthentication: () => refreshCoordinator.refresh(),
@@ -177,6 +359,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }),
     [
       deleteAccount,
+      api,
       getAccessToken,
       logout,
       refreshCoordinator,

@@ -11,6 +11,7 @@ import {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe('ApiClient', () => {
@@ -59,6 +60,32 @@ describe('ApiClient', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('bounds a never-settling token provider inside the total request deadline', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn();
+    const client = new ApiClient({
+      baseUrl: 'https://api.example.test',
+      tokenProvider: () => new Promise<string | null>(() => undefined),
+      timeoutMs: 25,
+      fetchImpl,
+    });
+    let settled = false;
+    const request = client.request('/api/v2/today').catch((error: unknown) => error);
+    void request.finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    await Promise.resolve();
+
+    expect(settled).toBe(true);
+    await expect(request).resolves.toMatchObject({
+      kind: 'timeout',
+      retryable: true,
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('does not rebind the browser fetch receiver', async () => {
     vi.stubGlobal(
       'fetch',
@@ -80,6 +107,86 @@ describe('ApiClient', () => {
     });
 
     await expect(client.request('/api/v1/today')).resolves.toEqual({ ok: true });
+  });
+
+  it('rotates an expired production session once and retries with the new token', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ detail: 'expired' }), { status: 401 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+    const recoverAuthentication = vi.fn(async () => 'rotated-access-token');
+    const client = new ApiClient({
+      baseUrl: 'http://localhost:8000',
+      tokenProvider: async () => 'expired-access-token',
+      recoverAuthentication,
+      fetchImpl,
+    });
+
+    await expect(client.request('/api/v2/today')).resolves.toEqual({ ok: true });
+
+    expect(recoverAuthentication).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer expired-access-token',
+    });
+    expect(fetchImpl.mock.calls[1]?.[1]?.headers).toMatchObject({
+      Authorization: 'Bearer rotated-access-token',
+    });
+  });
+
+  it('does not report fake success when session recovery cannot rotate', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 401 }));
+    const recoverAuthentication = vi.fn(async () => null);
+    const client = new ApiClient({
+      baseUrl: 'http://localhost:8000',
+      tokenProvider: async () => 'expired-access-token',
+      recoverAuthentication,
+      fetchImpl,
+    });
+
+    await expect(client.request('/api/v2/today')).rejects.toMatchObject({
+      kind: 'authentication',
+      retryable: false,
+      status: 401,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('bounds a never-settling authentication recovery inside the same request deadline', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 401 }));
+    const client = new ApiClient({
+      baseUrl: 'http://localhost:8000',
+      tokenProvider: async () => 'expired-access-token',
+      recoverAuthentication: () =>
+        new Promise<string | null>(() => undefined),
+      timeoutMs: 25,
+      fetchImpl,
+    });
+    let settled = false;
+    const request = client.request('/api/v2/today').catch(
+      (error: unknown) => error,
+    );
+    void request.finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(25);
+    await Promise.resolve();
+
+    expect(settled).toBe(true);
+    await expect(request).resolves.toMatchObject({
+      kind: 'timeout',
+      retryable: true,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it('maps a transport abort to a retryable timeout error', async () => {

@@ -38,9 +38,11 @@ MOBILE_DOGFOOD_USER_EXTERNAL_ID=mobile:dogfood
 
 ```dotenv
 EXPO_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+EXPO_PUBLIC_ENABLE_DOGFOOD=true
 ```
 
 `127.0.0.1` is suitable for iOS Simulator. A physical iPhone must use an HTTPS URL reachable from the device.
+The explicit dogfood flag is accepted only when `NODE_ENV=development`; omitting it keeps the local bearer flow locked.
 
 3. Open **Профиль → Данные и доступ**, enter the matching bearer token once, and tap **Подключить**. Native builds store it in iOS Keychain through Expo SecureStore; the token is never an `EXPO_PUBLIC_*` value.
 

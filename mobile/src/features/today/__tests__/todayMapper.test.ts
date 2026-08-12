@@ -50,8 +50,10 @@ function snapshot(overrides: Partial<DaySnapshotDto> = {}): DaySnapshotDto {
   const scheduled = [completed, current, upcoming];
   return {
     date: '2026-08-10',
+    as_of: '2026-08-10T17:00:00+03:00',
     focus_text: 'Сначала — Текущее действие.',
     progress: { done: 1, total: 3 },
+    week_progress: { done: 2, total: 5 },
     scheduled_items: scheduled,
     unscheduled_items: [],
     completed_items: [completed],
@@ -106,6 +108,21 @@ describe('mapDaySnapshot', () => {
       'upcoming',
     ]);
     expect(model.rows[1]?.label).toBe('Сейчас · до 18:00');
+  });
+
+  it('dims elapsed blocks from the server snapshot time between actions', () => {
+    const model = mapDaySnapshot(
+      snapshot({
+        as_of: '2026-08-10T19:00:00+03:00',
+        current_item: null,
+      }),
+    );
+
+    expect(model.rows.map((row) => row.variant)).toEqual([
+      'completed',
+      'past',
+      'upcoming',
+    ]);
   });
 
   it('maps unscheduled items without inventing a time or placement', () => {

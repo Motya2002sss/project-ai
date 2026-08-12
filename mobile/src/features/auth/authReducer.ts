@@ -25,7 +25,11 @@ export type AuthAction =
   | { type: 'session/authenticated'; user: AuthenticatedUser }
   | { type: 'refresh/started' }
   | { type: 'refresh/succeeded'; user?: AuthenticatedUser }
-  | { type: 'session/expired'; message: string }
+  | {
+      type: 'session/expired';
+      message: string;
+      user?: AuthenticatedUser | null;
+    }
   | { type: 'session/revoked' }
   | { type: 'logout/completed' }
   | { type: 'account/deleted' };
@@ -60,7 +64,11 @@ export function authReducer(state: AuthState, action: AuthAction): AuthState {
         error: null,
       };
     case 'session/expired':
-      return { status: 'expired', user: null, error: action.message };
+      return {
+        status: 'expired',
+        user: action.user === undefined ? state.user : action.user,
+        error: action.message,
+      };
     case 'session/revoked':
       return { status: 'revoked', user: null, error: null };
     default:

@@ -8,14 +8,16 @@
     "scheme": "ailifeplanner",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "dev.ailifeplanner.mobile"
+      "bundleIdentifier": "dev.ailifeplanner.mobile",
+      "usesAppleSignIn": true
     },
     "web": {
       "bundler": "metro"
     },
     "plugins": [
       "expo-router",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-apple-authentication"
     ],
     "experiments": {
       "typedRoutes": true

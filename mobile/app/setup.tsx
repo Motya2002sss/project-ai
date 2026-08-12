@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -12,6 +12,8 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { usePlanner } from '../src/features/planner/PlannerProvider';
+import { dogfoodRuntimeEnabled } from '../src/config/environment';
+import { notifyDogfoodAccessChanged } from '../src/features/auth/appGate';
 import { colors } from '../src/theme/colors';
 import { radius } from '../src/theme/radius';
 import { spacing } from '../src/theme/spacing';
@@ -25,12 +27,15 @@ export default function SetupRoute() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  if (!dogfoodRuntimeEnabled) return <Redirect href="/sign-in" />;
+
   const save = async () => {
     if (!token.trim() || !apiBaseUrl || saving) return;
     setSaving(true);
     setError(null);
     try {
       await updateDogfoodToken(token);
+      notifyDogfoodAccessChanged(dogfoodRuntimeEnabled);
       router.replace('/');
     } catch {
       setError('Не удалось сохранить доступ. Повторите.');

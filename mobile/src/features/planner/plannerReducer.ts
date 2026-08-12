@@ -49,6 +49,7 @@ export type CaptureState =
     };
 
 export interface PlannerState {
+  scope: string | null;
   today: {
     snapshot: DaySnapshotDto | null;
     source: 'none' | 'cache' | 'server';
@@ -73,6 +74,7 @@ export interface PlannerState {
 }
 
 export const initialPlannerState: PlannerState = {
+  scope: null,
   today: {
     snapshot: null,
     source: 'none',
@@ -126,6 +128,7 @@ function captureInteraction(
 }
 
 export type PlannerAction =
+  | { type: 'scope/changed'; scope: string | null }
   | { type: 'draft/hydrated'; value: string }
   | { type: 'draft/changed'; value: string }
   | { type: 'capture/opened' }
@@ -222,6 +225,9 @@ export function plannerReducer(
   action: PlannerAction,
 ): PlannerState {
   switch (action.type) {
+    case 'scope/changed':
+      if (state.scope === action.scope) return state;
+      return { ...initialPlannerState, scope: action.scope };
     case 'draft/hydrated':
       return { ...state, draft: action.value, draftHydrated: true };
     case 'draft/changed':
@@ -321,6 +327,7 @@ export function plannerReducer(
           refreshing: false,
           error: null,
         },
+        completion: { ...state.completion, error: null },
       };
     case 'today/refreshFailed':
       return {

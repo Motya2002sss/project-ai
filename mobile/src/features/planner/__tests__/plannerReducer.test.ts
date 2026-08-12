@@ -65,6 +65,72 @@ const clarificationState: PlannerState = {
 };
 
 describe('plannerReducer capture lifecycle', () => {
+  it('clears every user-owned surface before hydrating a different account scope', () => {
+    const previous: PlannerState = {
+      ...initialPlannerState,
+      scope: 'user-a',
+      today: {
+        snapshot,
+        source: 'server',
+        refreshing: false,
+        error: null,
+      },
+      draft: 'Приватный черновик пользователя A',
+      draftHydrated: true,
+      capture: { status: 'editing' },
+      completion: {
+        pendingByTask: {
+          1: { operationId: 'pending-a', targetStatus: 'done' },
+        },
+        error: null,
+      },
+    };
+
+    const switched = plannerReducer(previous, {
+      type: 'scope/changed',
+      scope: 'user-b',
+    });
+
+    expect(switched).toEqual({ ...initialPlannerState, scope: 'user-b' });
+    expect(switched.today.snapshot).toBeNull();
+    expect(switched.draft).toBe('');
+    expect(switched.capture.status).toBe('idle');
+  });
+
+  it('does not reset in-flight state when the account scope is unchanged', () => {
+    const current = { ...initialPlannerState, scope: 'user-a', draft: 'Черновик' };
+
+    expect(
+      plannerReducer(current, { type: 'scope/changed', scope: 'user-a' }),
+    ).toBe(current);
+  });
+
+  it('clears every user-owned surface when Planner becomes locked', () => {
+    const previous: PlannerState = {
+      ...initialPlannerState,
+      scope: 'user-a',
+      today: {
+        snapshot,
+        source: 'server',
+        refreshing: false,
+        error: null,
+      },
+      draft: 'Не должен остаться без владельца',
+      draftHydrated: true,
+      capture: { status: 'editing' },
+      completion: {
+        pendingByTask: {
+          1: { operationId: 'pending-a', targetStatus: 'done' },
+        },
+        error: null,
+      },
+    };
+
+    expect(
+      plannerReducer(previous, { type: 'scope/changed', scope: null }),
+    ).toEqual(initialPlannerState);
+  });
+
   it('starts exactly one capture submit while a request is active', () => {
     const start: PlannerAction = {
       type: 'capture/requestStarted',
@@ -478,6 +544,28 @@ describe('plannerReducer cached-first ordering', () => {
 });
 
 describe('plannerReducer task completion', () => {
+  it('clears a stale completion error after an authoritative refresh', () => {
+    const failedState: PlannerState = {
+      ...initialPlannerState,
+      completion: {
+        pendingByTask: {},
+        error: {
+          taskId: 42,
+          targetStatus: 'done',
+          message: 'Не удалось сохранить. Повторить',
+          retryable: true,
+        },
+      },
+    };
+
+    const refreshed = plannerReducer(failedState, {
+      type: 'today/refreshSucceeded',
+      snapshot,
+    });
+
+    expect(refreshed.completion.error).toBeNull();
+  });
+
   it('adds one optimistic status and blocks a duplicate tap', () => {
     const start: PlannerAction = {
       type: 'task/requestStarted',

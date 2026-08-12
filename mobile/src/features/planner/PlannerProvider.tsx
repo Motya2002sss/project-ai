@@ -9,6 +9,7 @@ import {
   useMemo,
   useReducer,
   useRef,
+  useState,
 } from 'react';
 
 import { ApiClient } from '../../api/client';
@@ -23,6 +24,7 @@ import type { TaskStatus } from '../../api/types';
 import {
   apiBaseUrl,
   captureTimeoutMs,
+  dogfoodRuntimeEnabled,
   slowCaptureDelayMs,
 } from '../../config/environment';
 import {
@@ -33,6 +35,7 @@ import {
   saveCaptureDraft,
   saveDogfoodToken,
 } from '../../storage/mobileStorage';
+import { useAuth } from '../auth/AuthProvider';
 import {
   type CaptureOperation,
   initialPlannerState,
@@ -45,6 +48,7 @@ import {
   LatestRequestGate,
   SerialMutationQueue,
 } from './mutationQueue';
+import { resolvePlannerAccess } from './plannerAuthPolicy';
 
 interface PlannerContextValue {
   state: PlannerState;
@@ -70,27 +74,73 @@ const PlannerContext = createContext<PlannerContextValue | null>(null);
 
 export function PlannerProvider({ children }: PropsWithChildren) {
   const [state, dispatch] = useReducer(plannerReducer, initialPlannerState);
+  const {
+    state: authState,
+    getAccessToken,
+    recoverAuthentication,
+  } = useAuth();
+  const [dogfoodTokenAvailable, setDogfoodTokenAvailable] = useState(false);
+  const plannerAccess = resolvePlannerAccess(
+    authState.status,
+    authState.user?.publicId ?? null,
+    dogfoodRuntimeEnabled,
+    dogfoodTokenAvailable,
+  );
+  const cacheScope = plannerAccess.scope;
+  const plannerLocked = plannerAccess.kind === 'locked';
+  const productionApi = plannerAccess.kind !== 'dogfood';
+  const scopedState = useMemo(
+    () =>
+      state.scope === cacheScope
+        ? state
+        : { ...initialPlannerState, scope: cacheScope },
+    [cacheScope, state],
+  );
   const stateRef = useRef(state);
-  stateRef.current = state;
+  stateRef.current = scopedState;
   const activeCaptureRef = useRef<string | null>(null);
   const activeTasksRef = useRef(new KeyedOperationRegistry<number>());
   const mutationQueueRef = useRef(new SerialMutationQueue());
+  const completionRetryRef = useRef<{
+    taskId: number;
+    targetStatus: TaskStatus;
+    requestId: string;
+    expectedPlanVersion: number;
+  } | null>(null);
   const todayRequestGateRef = useRef(new LatestRequestGate());
   const authoritativeEpochRef = useRef(0);
+
+  useEffect(() => {
+    if (!dogfoodRuntimeEnabled) {
+      setDogfoodTokenAvailable(false);
+      return;
+    }
+    let active = true;
+    void getDogfoodToken().then((token) => {
+      if (active) setDogfoodTokenAvailable(Boolean(token));
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const api = useMemo(
     () =>
       new PlannerApi(
         new ApiClient({
           baseUrl: apiBaseUrl,
-          tokenProvider: getDogfoodToken,
+          tokenProvider: productionApi ? getAccessToken : getDogfoodToken,
+          ...(productionApi ? { recoverAuthentication } : {}),
           timeoutMs: captureTimeoutMs,
         }),
+        { apiPrefix: productionApi ? '/api/v2' : '/api/v1' },
       ),
-    [],
+    [getAccessToken, productionApi, recoverAuthentication],
   );
 
   const refreshToday = useCallback(() => {
+    if (plannerLocked || !cacheScope) return;
+    const requestScope = cacheScope;
     const requestEpoch = authoritativeEpochRef.current;
     const requestId = todayRequestGateRef.current.begin();
     dispatch({ type: 'today/refreshStarted' });
@@ -108,7 +158,7 @@ export function PlannerProvider({ children }: PropsWithChildren) {
           .enqueue(() =>
             requestEpoch === authoritativeEpochRef.current &&
               todayRequestGateRef.current.isCurrent(requestId)
-              ? saveCachedSnapshot(snapshot)
+              ? saveCachedSnapshot(snapshot, requestScope)
               : Promise.resolve(),
           )
           .catch(() => undefined);
@@ -130,13 +180,28 @@ export function PlannerProvider({ children }: PropsWithChildren) {
           retryable: presentation.retryable,
         });
       });
-  }, [api]);
+  }, [api, cacheScope, plannerLocked]);
 
   useEffect(() => {
+    if (plannerLocked || !cacheScope) {
+      activeCaptureRef.current = null;
+      activeTasksRef.current = new KeyedOperationRegistry<number>();
+      mutationQueueRef.current = new SerialMutationQueue();
+      todayRequestGateRef.current.invalidate();
+      authoritativeEpochRef.current += 1;
+      dispatch({ type: 'scope/changed', scope: null });
+      return;
+    }
     let mounted = true;
+    activeCaptureRef.current = null;
+    activeTasksRef.current = new KeyedOperationRegistry<number>();
+    mutationQueueRef.current = new SerialMutationQueue();
+    todayRequestGateRef.current.invalidate();
+    authoritativeEpochRef.current += 1;
+    dispatch({ type: 'scope/changed', scope: cacheScope });
     void Promise.all([
-      loadCachedSnapshot().catch(() => null),
-      loadCaptureDraft().catch(() => ''),
+      loadCachedSnapshot(cacheScope).catch(() => null),
+      loadCaptureDraft(cacheScope).catch(() => ''),
     ]).then(([snapshot, draft]) => {
       if (!mounted) return;
       dispatch({ type: 'today/cacheLoaded', snapshot });
@@ -146,12 +211,12 @@ export function PlannerProvider({ children }: PropsWithChildren) {
     return () => {
       mounted = false;
     };
-  }, [refreshToday]);
+  }, [cacheScope, plannerLocked, refreshToday]);
 
   useEffect(() => {
-    if (!state.draftHydrated) return;
-    void saveCaptureDraft(state.draft).catch(() => undefined);
-  }, [state.draft, state.draftHydrated]);
+    if (!cacheScope || plannerLocked || !scopedState.draftHydrated) return;
+    void saveCaptureDraft(scopedState.draft, cacheScope).catch(() => undefined);
+  }, [cacheScope, plannerLocked, scopedState.draft, scopedState.draftHydrated]);
 
   const sendOperation = useCallback(
     (
@@ -159,7 +224,8 @@ export function PlannerProvider({ children }: PropsWithChildren) {
       requestId: string,
       explicitCancel = false,
     ) => {
-      if (activeCaptureRef.current) return;
+      if (plannerLocked || !cacheScope || activeCaptureRef.current) return;
+      const operationScope = cacheScope;
       activeCaptureRef.current = requestId;
       authoritativeEpochRef.current += 1;
       dispatch({ type: 'capture/requestStarted', requestId, operation });
@@ -190,7 +256,9 @@ export function PlannerProvider({ children }: PropsWithChildren) {
             explicitCancel,
           });
           activeCaptureRef.current = null;
-          await saveCachedSnapshot(response.day_snapshot).catch(() => undefined);
+          await saveCachedSnapshot(response.day_snapshot, operationScope).catch(
+            () => undefined,
+          );
         } catch (error: unknown) {
           if (activeCaptureRef.current !== requestId) return;
           const presentation = toCapturePresentationError(error);
@@ -208,7 +276,7 @@ export function PlannerProvider({ children }: PropsWithChildren) {
         }
       });
     },
-    [api],
+    [api, cacheScope, plannerLocked],
   );
 
   const submitCapture = useCallback(() => {
@@ -242,8 +310,18 @@ export function PlannerProvider({ children }: PropsWithChildren) {
   }, [sendOperation]);
 
   const requestTaskStatus = useCallback(
-    (taskId: number, targetStatus: TaskStatus) => {
-      const operationId = Crypto.randomUUID();
+    (
+      taskId: number,
+      targetStatus: TaskStatus,
+      retry?: { requestId: string; expectedPlanVersion: number },
+    ) => {
+      if (plannerLocked || !cacheScope) return;
+      const expectedPlanVersion =
+        retry?.expectedPlanVersion ??
+        stateRef.current.today.snapshot?.plan_version;
+      if (expectedPlanVersion === undefined) return;
+      const operationScope = cacheScope;
+      const operationId = retry?.requestId ?? Crypto.randomUUID();
       if (!activeTasksRef.current.start(taskId, operationId)) return;
       authoritativeEpochRef.current += 1;
       dispatch({
@@ -255,8 +333,14 @@ export function PlannerProvider({ children }: PropsWithChildren) {
 
       void mutationQueueRef.current.enqueue(async () => {
         try {
-          const response = await api.setTaskStatus(taskId, targetStatus);
+          const response = await api.setTaskStatus(taskId, targetStatus, {
+            requestId: operationId,
+            expectedPlanVersion,
+          });
           if (!activeTasksRef.current.isActive(taskId, operationId)) return;
+          if (completionRetryRef.current?.requestId === operationId) {
+            completionRetryRef.current = null;
+          }
           authoritativeEpochRef.current += 1;
           dispatch({
             type: 'task/requestSucceeded',
@@ -268,10 +352,18 @@ export function PlannerProvider({ children }: PropsWithChildren) {
           void Haptics.notificationAsync(
             Haptics.NotificationFeedbackType.Success,
           ).catch(() => undefined);
-          await saveCachedSnapshot(response.day_snapshot).catch(() => undefined);
+          await saveCachedSnapshot(response.day_snapshot, operationScope).catch(
+            () => undefined,
+          );
         } catch (error: unknown) {
           if (!activeTasksRef.current.isActive(taskId, operationId)) return;
           const presentation = toCompletionPresentationError(error);
+          completionRetryRef.current = {
+            taskId,
+            targetStatus,
+            requestId: operationId,
+            expectedPlanVersion,
+          };
           dispatch({
             type: 'task/requestFailed',
             taskId,
@@ -284,7 +376,7 @@ export function PlannerProvider({ children }: PropsWithChildren) {
         }
       });
     },
-    [api],
+    [api, cacheScope, plannerLocked],
   );
 
   const toggleTaskStatus = useCallback(
@@ -299,23 +391,24 @@ export function PlannerProvider({ children }: PropsWithChildren) {
 
   const retryCompletion = useCallback(() => {
     const failed = stateRef.current.completion.error;
-    if (!failed?.retryable) return;
-    requestTaskStatus(failed.taskId, failed.targetStatus);
+    const retry = completionRetryRef.current;
+    if (!failed?.retryable || !retry) return;
+    requestTaskStatus(retry.taskId, retry.targetStatus, retry);
   }, [requestTaskStatus]);
 
   const completionOverrides = useMemo(() => {
     const overrides: Record<number, TaskStatus> = {};
     for (const [taskId, pending] of Object.entries(
-      state.completion.pendingByTask,
+      scopedState.completion.pendingByTask,
     )) {
       overrides[Number(taskId)] = pending.targetStatus;
     }
     return overrides;
-  }, [state.completion.pendingByTask]);
+  }, [scopedState.completion.pendingByTask]);
 
   const value = useMemo<PlannerContextValue>(
     () => ({
-      state,
+      state: scopedState,
       completionOverrides,
       apiBaseUrl,
       openCapture: () => dispatch({ type: 'capture/opened' }),
@@ -328,23 +421,28 @@ export function PlannerProvider({ children }: PropsWithChildren) {
       refreshToday,
       toggleTaskStatus,
       updateDogfoodToken: async (token) => {
+        if (!dogfoodRuntimeEnabled) {
+          throw new Error('Dogfood access is disabled');
+        }
         todayRequestGateRef.current.invalidate();
         try {
           await saveDogfoodToken(token);
         } catch (error) {
-          refreshToday();
           throw error;
         }
-        refreshToday();
+        const available = Boolean(token.trim());
+        setDogfoodTokenAvailable(available);
+        if (available && !plannerLocked) refreshToday();
       },
     }),
     [
       completionOverrides,
+      plannerLocked,
       refreshToday,
       respondToInteraction,
       retryCapture,
       retryCompletion,
-      state,
+      scopedState,
       submitCapture,
       toggleTaskStatus,
     ],
