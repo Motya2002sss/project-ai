@@ -14,7 +14,7 @@ Core principle:
 
 ## Current MVP Status
 
-The MVP already includes the shared backend core, authenticated Mobile API v1, database persistence, migrations, tests, and frozen compatibility clients.
+The MVP already includes the shared backend core, authenticated Mobile API v1 and production-capable v2 sessions, a native Expo iOS client, database persistence, migrations, tests, and frozen compatibility clients.
 
 Implemented:
 
@@ -28,6 +28,10 @@ Implemented:
 - automatic fallback to mock parser when LLM is unavailable or invalid;
 - shared message processing service for iOS text, frozen compatibility text, and future voice transcripts;
 - authenticated Mobile API v1 for iOS dogfooding;
+- rotating authenticated Mobile API v2 sessions and account lifecycle;
+- native iOS Today, Path, onboarding, profile, and Day/Week/Month Calendar flows;
+- privacy-safe Apple Calendar busy-time import with user/device/provider isolation;
+- versioned, atomic adaptive replanning with factual diff and bounded Undo;
 - frozen FastAPI Web compatibility API;
 - frozen Today Web UI in `web/`;
 - user profile storage;
@@ -60,13 +64,13 @@ Implemented:
 Not ready yet:
 
 - production LLM provider selection and ongoing prompt tuning;
-- the native iOS client itself;
-- TestFlight multi-user authentication;
+- real-device acceptance of Apple Sign In and EventKit import on a release-capable build;
 - production deployment;
-- Week, Path, Profile mutation, Voice/STT, and general Undo mobile contracts;
-- advanced recurrence editing, exceptions, and calendar synchronization.
+- Voice/STT, workout tracking, and general Undo mobile contracts;
+- calendar write sync and its server-side kill switch;
+- advanced recurrence editing and exceptions.
 
-FastAPI currently provides `/health`, frozen `/api` Web compatibility endpoints, and an authenticated `/api/v1` contract for the first iOS vertical slice. Every channel converges on the same parser, service, and planner layers.
+FastAPI currently provides `/health`, frozen `/api` Web compatibility endpoints, the authenticated `/api/v1` dogfood contract, and production-capable `/api/v2` auth, planning, activity, and calendar contracts. Every channel converges on the same parser, service, and planner layers.
 
 Planning is split deliberately: the parser or LLM extracts operations and constraints, while the backend calculates timezone-aware availability, resolves user-owned tasks, prevents overlaps, persists changes atomically, and produces the factual diff. The LLM never chooses or writes the final schedule directly.
 
