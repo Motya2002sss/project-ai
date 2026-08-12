@@ -10,11 +10,9 @@ From the repository root, use one command and keep that Terminal window open:
 ./scripts/dogfood/start.sh
 ```
 
-The launcher starts PostgreSQL, applies migrations, starts and warms Ollama when the local `.env` selects it, runs FastAPI, obtains a fresh Cloudflare Quick Tunnel URL, updates ignored `mobile/.env.local`, checks HTTPS health, and finally shows the Expo QR in LAN mode.
+The launcher starts PostgreSQL, applies migrations, starts and warms Ollama when the local `.env` selects it, runs FastAPI, obtains a fresh Cloudflare Quick Tunnel URL, updates ignored `mobile/.env.local` with the public URL and explicit development-only dogfood flag, checks HTTPS health, and finally shows the Expo QR in LAN mode.
 
 Press `Ctrl+C` once in that window to stop Expo, FastAPI, and the Quick Tunnel started by the launcher. PostgreSQL stays in Docker so the next launch is quick. If a previous combined launcher was suspended or left behind after its Terminal window closed, running the same command again stops that exact recorded stack and starts a fresh one. Unrelated processes on ports `8000` or `8081` are never killed automatically.
-
-The launcher stops before backend startup when macOS reports an active VPN. Expo Go uses the local network for Metro, so disable VPN on both the Mac and iPhone and run the same command again. For an intentional diagnostic run, use `DOGFOOD_ALLOW_VPN=1 ./scripts/dogfood/start.sh`; normal dogfooding should keep VPN off.
 
 The component scripts remain available for diagnosis:
 

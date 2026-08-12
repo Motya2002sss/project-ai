@@ -97,6 +97,7 @@ dogfood_recover_previous_stack() {
   local dogfood_recorded_root
   local dogfood_actual_start
   local dogfood_actual_command
+  local dogfood_previous_pgid
   local dogfood_previous_state
   local dogfood_attempt
 
@@ -134,8 +135,17 @@ dogfood_recover_previous_stack() {
   fi
 
   echo "Перезапускаю предыдущий dogfood stack…"
-  kill -TERM "$dogfood_previous_pid" 2>/dev/null || true
-  kill -CONT "$dogfood_previous_pid" 2>/dev/null || true
+  dogfood_previous_pgid="$(
+    ps -p "$dogfood_previous_pid" -o pgid= 2>/dev/null | awk '{$1=$1; print}'
+  )"
+  if [[ "$dogfood_previous_pgid" =~ ^[0-9]+$ ]] && \
+    test "$dogfood_previous_pgid" = "$dogfood_previous_pid"; then
+    kill -TERM -- "-${dogfood_previous_pgid}" 2>/dev/null || true
+    kill -CONT -- "-${dogfood_previous_pgid}" 2>/dev/null || true
+  else
+    kill -TERM "$dogfood_previous_pid" 2>/dev/null || true
+    kill -CONT "$dogfood_previous_pid" 2>/dev/null || true
+  fi
   for ((dogfood_attempt = 1; dogfood_attempt <= 100; dogfood_attempt += 1)); do
     if ! kill -0 "$dogfood_previous_pid" 2>/dev/null; then
       rm -f "$dogfood_supervisor_file"
@@ -152,18 +162,6 @@ dogfood_recover_previous_stack() {
   echo "Предыдущий dogfood stack не остановился. Нажмите Ctrl+C в его окне и повторите." >&2
   return 1
 }
-
-if command -v scutil >/dev/null 2>&1; then
-  dogfood_vpn_name="$(scutil --nc list 2>/dev/null | dogfood_connected_vpn_name || true)"
-  if test -n "$dogfood_vpn_name"; then
-    if test "${DOGFOOD_ALLOW_VPN:-0}" != "1"; then
-      echo "Активен VPN «${dogfood_vpn_name}». Выключите VPN на Mac и iPhone и запустите команду снова." >&2
-      echo "Для осознанного запуска с VPN: DOGFOOD_ALLOW_VPN=1 ./scripts/dogfood/start.sh" >&2
-      exit 1
-    fi
-    echo "VPN разрешён явно через DOGFOOD_ALLOW_VPN=1: «${dogfood_vpn_name}»."
-  fi
-fi
 
 mkdir -p "$dogfood_runtime_dir"
 chmod 700 "$dogfood_runtime_dir"

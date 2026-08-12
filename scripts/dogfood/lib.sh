@@ -51,7 +51,8 @@ dogfood_write_mobile_env() {
 
   temp_file="$(mktemp "$env_dir/.env.dogfood.XXXXXX")" || return 1
   chmod 600 "$temp_file"
-  if ! printf 'EXPO_PUBLIC_API_BASE_URL=%s\n' "$tunnel_url" >"$temp_file"; then
+  if ! printf 'EXPO_PUBLIC_API_BASE_URL=%s\nEXPO_PUBLIC_ENABLE_DOGFOOD=true\n' \
+    "$tunnel_url" >"$temp_file"; then
     rm -f "$temp_file"
     return 1
   fi
@@ -180,19 +181,4 @@ dogfood_warm_ollama() {
     -H 'Content-Type: application/json' \
     --data "$payload" \
     "$base_url/api/chat" >/dev/null
-}
-
-dogfood_connected_vpn_name() {
-  awk -F '"' '
-    /\(Connected\)/ {
-      if (NF >= 3 && length($2) > 0) {
-        print $2
-      } else {
-        print "VPN"
-      }
-      found = 1
-      exit
-    }
-    END { if (!found) exit 1 }
-  '
 }

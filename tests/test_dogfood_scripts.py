@@ -98,7 +98,7 @@ def test_write_mobile_env_rejects_invalid_url_without_overwriting(tmp_path: Path
     )
 
 
-def test_write_mobile_env_writes_only_public_tunnel_url(tmp_path: Path):
+def test_write_mobile_env_writes_only_public_dogfood_runtime_config(tmp_path: Path):
     env_file = tmp_path / ".env.local"
 
     result = run_lib(
@@ -110,6 +110,7 @@ def test_write_mobile_env_writes_only_public_tunnel_url(tmp_path: Path):
     assert result.returncode == 0
     assert env_file.read_text(encoding="utf-8") == (
         "EXPO_PUBLIC_API_BASE_URL=https://calm-dogfood-day.trycloudflare.com\n"
+        "EXPO_PUBLIC_ENABLE_DOGFOOD=true\n"
     )
 
 
@@ -252,20 +253,6 @@ def test_warm_ollama_rejects_model_name_that_can_break_json(tmp_path: Path):
 
     assert result.returncode != 0
     assert result.stderr == ""
-
-
-def test_connected_vpn_name_extracts_the_active_service():
-    result = run_lib(
-        "dogfood_connected_vpn_name",
-        input_text=(
-            "Available network connection services in the current set (*=enabled):\n"
-            '* (Connected) 13D01C45 VPN (org.amnezia.awg) "amnezia_for_awg" '
-            "[VPN:org.amnezia.awg]\n"
-        ),
-    )
-
-    assert result.returncode == 0
-    assert result.stdout == "amnezia_for_awg\n"
 
 
 def test_single_terminal_launcher_help_describes_owned_stack():
@@ -562,7 +549,7 @@ def test_single_terminal_launcher_starts_in_order_and_cleans_up_owned_processes(
         unrelated.wait(timeout=2)
 
 
-def test_single_terminal_launcher_blocks_connected_vpn_before_backend(tmp_path: Path):
+def test_single_terminal_launcher_does_not_block_connected_vpn(tmp_path: Path):
     launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
     fake_bin = Path(environment["PATH"].split(":", 1)[0])
     fake_scutil = fake_bin / "scutil"
@@ -573,34 +560,6 @@ def test_single_terminal_launcher_blocks_connected_vpn_before_backend(tmp_path: 
         encoding="utf-8",
     )
     fake_scutil.chmod(0o755)
-
-    result = subprocess.run(
-        [launcher],
-        check=False,
-        capture_output=True,
-        env=environment,
-        text=True,
-        timeout=5,
-    )
-
-    assert result.returncode != 0
-    assert not events_file.exists()
-    assert "активен vpn «amnezia_for_awg»" in result.stderr.lower()
-    assert "DOGFOOD_ALLOW_VPN=1" in result.stderr
-
-
-def test_single_terminal_launcher_allows_explicit_vpn_override(tmp_path: Path):
-    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
-    fake_bin = Path(environment["PATH"].split(":", 1)[0])
-    fake_scutil = fake_bin / "scutil"
-    fake_scutil.write_text(
-        "#!/usr/bin/env bash\n"
-        "printf '%s\\n' '* (Connected) 13D01C45 VPN (org.amnezia.awg) "
-        "\"amnezia_for_awg\" [VPN:org.amnezia.awg]'\n",
-        encoding="utf-8",
-    )
-    fake_scutil.chmod(0o755)
-    environment["DOGFOOD_ALLOW_VPN"] = "1"
 
     result = subprocess.run(
         [launcher],
@@ -612,7 +571,8 @@ def test_single_terminal_launcher_allows_explicit_vpn_override(tmp_path: Path):
     )
 
     assert result.returncode == 0, result.stderr
-    assert "VPN разрешён явно" in result.stdout
+    assert "vpn" not in result.stdout.lower()
+    assert "vpn" not in result.stderr.lower()
     assert events_file.read_text(encoding="utf-8").splitlines()[:3] == [
         "backend-start",
         "tunnel-start",
@@ -789,6 +749,68 @@ def test_single_terminal_launcher_restarts_its_recorded_previous_stack(
         assert "mobile-stopped" in events
     finally:
         if first.poll() is None:
+            os.killpg(first.pid, signal.SIGTERM)
+            first.wait(timeout=2)
+
+
+def test_single_terminal_launcher_recovers_a_suspended_previous_stack(
+    tmp_path: Path,
+):
+    launcher, environment, events_file = prepare_fake_supervisor_stack(tmp_path)
+    environment["DOGFOOD_RUNTIME_DIR"] = str(tmp_path / "runtime")
+    mobile_script = launcher.parent / "start-mobile.sh"
+    mobile_script.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "trap 'echo mobile-stopped >>\"$DOGFOOD_EVENTS_FILE\"; exit 0' TERM INT\n"
+        "echo mobile-start >>\"$DOGFOOD_EVENTS_FILE\"\n"
+        "while :; do sleep 0.05; done\n",
+        encoding="utf-8",
+    )
+
+    first = subprocess.Popen(
+        [launcher],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        for _ in range(100):
+            if events_file.exists() and "mobile-start" in events_file.read_text(
+                encoding="utf-8"
+            ):
+                break
+            time.sleep(0.02)
+        else:
+            raise AssertionError("first dogfood stack did not start")
+
+        os.killpg(first.pid, signal.SIGSTOP)
+        mobile_script.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            "echo mobile-start >>\"$DOGFOOD_EVENTS_FILE\"\n",
+            encoding="utf-8",
+        )
+
+        second = subprocess.run(
+            [launcher],
+            check=False,
+            capture_output=True,
+            env=environment,
+            text=True,
+            timeout=8,
+        )
+
+        assert second.returncode == 0, second.stderr
+        first.wait(timeout=2)
+        events = events_file.read_text(encoding="utf-8").splitlines()
+        assert events.count("mobile-start") == 2
+        assert "mobile-stopped" in events
+    finally:
+        if first.poll() is None:
+            os.killpg(first.pid, signal.SIGCONT)
             os.killpg(first.pid, signal.SIGTERM)
             first.wait(timeout=2)
 
