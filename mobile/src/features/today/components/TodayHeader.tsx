@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '../../../theme/colors';
 import { typography } from '../../../theme/typography';
@@ -10,6 +10,7 @@ interface TodayHeaderProps {
   progressFraction?: number;
   weekProgressLabel?: string | null;
   directionTitles?: string[];
+  onOpenCalendar?: () => void;
 }
 
 export function TodayHeader({
@@ -19,6 +20,7 @@ export function TodayHeader({
   progressFraction = 0,
   weekProgressLabel,
   directionTitles = [],
+  onOpenCalendar,
 }: TodayHeaderProps) {
   const progressWidth = `${Math.round(
     Math.min(1, Math.max(0, progressFraction)) * 100,
@@ -28,7 +30,14 @@ export function TodayHeader({
       <Text style={styles.date}>{dateLabel}</Text>
       <View style={styles.titleRow}>
         <Text style={styles.title}>Сегодня</Text>
-        {progressLabel ? <Text style={styles.progressLabel}>{progressLabel}</Text> : null}
+        <View style={styles.titleActions}>
+          {progressLabel ? <Text style={styles.progressLabel}>{progressLabel}</Text> : null}
+          {onOpenCalendar ? (
+            <Pressable accessibilityRole="button" accessibilityLabel="Открыть календарь" onPress={onOpenCalendar} hitSlop={6} style={styles.calendarButton}>
+              <Text accessibilityElementsHidden style={styles.calendarIcon}>▦</Text>
+            </Pressable>
+          ) : null}
+        </View>
       </View>
       {progressLabel ? (
         <View
@@ -75,6 +84,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   title: { ...typography.screenTitle, color: colors.ink, flexShrink: 1 },
+  titleActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  calendarButton: { minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center' },
+  calendarIcon: { fontSize: 23, lineHeight: 26, color: colors.burgundy },
   progressLabel: {
     ...typography.caption,
     ...typography.tabular,

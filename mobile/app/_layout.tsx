@@ -26,6 +26,7 @@ export default function RootLayout() {
             <Stack.Screen name="onboarding-preview" />
             <Stack.Screen name="task/[id]" />
             <Stack.Screen name="goal/[id]" />
+            <Stack.Screen name="calendar" />
             <Stack.Screen name="setup" options={{ presentation: 'modal' }} />
           </Stack>
           <AppRouteGate />

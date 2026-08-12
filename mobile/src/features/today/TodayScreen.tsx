@@ -101,6 +101,11 @@ export function TodayScreen() {
             progressFraction={model?.progressFraction}
             weekProgressLabel={model?.weekProgressLabel}
             directionTitles={model?.directionTitles}
+            onOpenCalendar={() =>
+              snapshot
+                ? router.push({ pathname: '/calendar', params: { date: snapshot.date } } as never)
+                : router.push('/calendar')
+            }
           />
           {capture.status === 'submitting' ? (
             <ProcessingNotice slow={capture.slow} />
