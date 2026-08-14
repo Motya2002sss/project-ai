@@ -1,4 +1,7 @@
+from secrets import compare_digest
+
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.api.v2.dependencies import (
@@ -14,6 +17,7 @@ from app.schemas.auth import (
     AuthChallengeRequest,
     AuthChallengeResponse,
     AuthenticatedUserResponse,
+    DogfoodSignInRequest,
     RefreshSessionRequest,
     SignInResponse,
     TokenPairResponse,
@@ -28,10 +32,13 @@ from app.services.auth_service import (
     revoke_session,
     rotate_session,
     sign_in_with_apple,
+    sign_in_for_local_dogfood,
 )
+from app.services.user_service import get_or_create_user_by_external_id
 
 
 router = APIRouter(prefix="/auth", tags=["auth-v2"])
+dogfood_bearer = HTTPBearer(auto_error=False)
 
 
 def get_apple_verifier() -> AppleTokenVerifier:
@@ -83,6 +90,38 @@ def authenticate_with_apple(
         db,
         identity=identity,
         provided_name=request.name,
+        device=DeviceMetadata(**request.device.model_dump()),
+    )
+    return _sign_in_response(signed_in.user, signed_in.session)
+
+
+@router.post("/dogfood", response_model=SignInResponse)
+def authenticate_local_dogfood(
+    request: DogfoodSignInRequest,
+    credentials: HTTPAuthorizationCredentials | None = Depends(dogfood_bearer),
+    db: Session = Depends(get_db),
+) -> SignInResponse:
+    if settings.app_env not in {"local", "test"} or not settings.allow_dogfood_auth:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    configured_token = settings.mobile_dogfood_token
+    if not configured_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Local dogfood authentication is not configured",
+        )
+    if (
+        credentials is None
+        or credentials.scheme.lower() != "bearer"
+        or not compare_digest(credentials.credentials, configured_token)
+    ):
+        raise invalid_credentials()
+    user = get_or_create_user_by_external_id(
+        db,
+        external_id=settings.mobile_dogfood_user_external_id,
+    )
+    signed_in = sign_in_for_local_dogfood(
+        db,
+        user=user,
         device=DeviceMetadata(**request.device.model_dump()),
     )
     return _sign_in_response(signed_in.user, signed_in.session)

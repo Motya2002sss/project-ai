@@ -7,6 +7,11 @@ import {
   type AppleAuthorizationAdapter,
 } from '../appleAuthAdapter';
 
+vi.mock('react-native', () => ({ Platform: { OS: 'ios', Version: '19.0' } }));
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: {} }));
+vi.mock('expo-apple-authentication', () => ({}));
+vi.mock('expo-crypto', () => ({}));
+
 afterEach(() => {
   vi.useRealTimers();
 });

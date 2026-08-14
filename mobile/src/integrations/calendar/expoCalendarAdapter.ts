@@ -1,4 +1,6 @@
+import * as Calendar from 'expo-calendar';
 import type { CalendarAdapter, CalendarBusyInterval, CalendarPermission } from './calendarAdapter';
+import { Platform } from 'react-native';
 
 interface ExpoCalendarRecord { id: string; entityType?: string }
 interface ExpoEventRecord {
@@ -52,10 +54,6 @@ export class ExpoCalendarAdapter implements CalendarAdapter {
 }
 
 export async function createExpoCalendarAdapter(): Promise<CalendarAdapter> {
-  const [{ Platform }, Calendar] = await Promise.all([
-    import('react-native'),
-    import('expo-calendar'),
-  ]);
   return new ExpoCalendarAdapter(Calendar, Platform.OS);
 }
 

@@ -23,7 +23,7 @@ updated: 2026-08-11
 - отсутствие Apple client ID;
 - отсутствие Privacy Policy, Terms и Support URL.
 
-Local Mobile API v1 остаётся только для dogfooding. Production identity никогда не получается из `user_id`, `user_external_id` или другого значения клиента.
+Local Mobile API v1 остаётся только для dogfooding. Для проверки полного UI в Expo Go `POST /api/v2/auth/dogfood` обменивает server-configured dogfood bearer на обычную rotating v2 session того же server-owned пользователя. Endpoint существует только при `APP_ENV=local|test` и `ALLOW_DOGFOOD_AUTH=true`; staging/production всегда отвечает `404`. Production identity никогда не получается из `user_id`, `user_external_id` или другого значения клиента.
 
 ## Identity map
 
@@ -55,6 +55,7 @@ Missing, expired и revoked access credentials возвращают одинак
 ```text
 POST   /api/v2/auth/challenge
 POST   /api/v2/auth/apple
+POST   /api/v2/auth/dogfood       # local/test only
 POST   /api/v2/auth/refresh
 POST   /api/v2/auth/logout
 POST   /api/v2/auth/revoke-all

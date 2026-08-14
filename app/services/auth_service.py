@@ -167,6 +167,25 @@ def sign_in_with_apple(
     return SignInResult(user=user, session=session_pair)
 
 
+def sign_in_for_local_dogfood(
+    db: Session,
+    *,
+    user: User,
+    device: DeviceMetadata,
+    now: datetime | None = None,
+) -> SignInResult:
+    current = now or _utc_now()
+    session_pair = _issue_session(
+        db,
+        user=user,
+        device=device,
+        family_id=uuid4(),
+        now=current,
+    )
+    db.commit()
+    return SignInResult(user=user, session=session_pair)
+
+
 def _issue_session(
     db: Session,
     *,

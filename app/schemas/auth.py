@@ -36,6 +36,12 @@ class AppleSignInRequest(BaseModel):
     device: DeviceMetadataRequest
 
 
+class DogfoodSignInRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    device: DeviceMetadataRequest
+
+
 class RefreshSessionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

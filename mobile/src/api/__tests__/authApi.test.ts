@@ -20,6 +20,39 @@ afterEach(() => {
 });
 
 describe('AuthApi', () => {
+  it('exchanges a development dogfood bearer for a normal v2 session', async () => {
+    const fetchImpl = vi.fn(async () => json({
+      access_token: 'v2-access',
+      refresh_token: 'v2-refresh',
+      user: {
+        public_id: 'public-dogfood-user',
+        name: null,
+        email: null,
+        timezone: 'UTC',
+      },
+    }));
+    const api = new AuthApi({ baseUrl: 'https://api.example.test', fetchImpl });
+
+    await expect(api.signInWithDogfood('dogfood-secret', {
+      deviceId: 'expo-go-1',
+      platform: 'ios',
+    })).resolves.toMatchObject({
+      credentials: { accessToken: 'v2-access', refreshToken: 'v2-refresh' },
+      user: { publicId: 'public-dogfood-user' },
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      'https://api.example.test/api/v2/auth/dogfood',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer dogfood-secret' }),
+        body: JSON.stringify({
+          device: { device_id: 'expo-go-1', platform: 'ios' },
+        }),
+      }),
+    );
+  });
+
   it('sends the Apple credential without any client-owned user identity', async () => {
     const fetchImpl = vi.fn(
       async (_input: string | URL | Request, _init?: RequestInit) =>

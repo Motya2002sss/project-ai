@@ -8,6 +8,7 @@ import {
 import { SessionRefreshCoordinator } from '../../../api/authApi';
 import {
   SessionVault,
+  VolatileSessionStore,
   type SecureKeyValueStorage,
 } from '../../../storage/sessionStorage';
 import {
@@ -138,6 +139,21 @@ class MemorySecureStore implements SecureKeyValueStorage {
 }
 
 describe('SessionVault', () => {
+  it('keeps a development session available without native storage', () => {
+    const store = new VolatileSessionStore();
+    store.save(user.publicId, {
+      accessToken: 'dogfood-access',
+      refreshToken: 'dogfood-refresh',
+    });
+
+    expect(store.load()).toMatchObject({
+      publicUserId: user.publicId,
+      credentials: { accessToken: 'dogfood-access' },
+    });
+    store.clear();
+    expect(store.load()).toBeNull();
+  });
+
   it('atomically binds credentials and public identity in one versioned envelope', async () => {
     const secureStore = new MemorySecureStore();
     const vault = new SessionVault(secureStore);

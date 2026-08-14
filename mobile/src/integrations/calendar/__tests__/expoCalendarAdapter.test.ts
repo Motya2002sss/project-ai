@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ExpoCalendarAdapter, type ExpoCalendarModule } from '../expoCalendarAdapter';
+
+vi.mock('react-native', () => ({ Platform: { OS: 'ios', Version: '19.0' } }));
+vi.mock('expo-calendar', () => ({}));
 
 function module(overrides: Partial<ExpoCalendarModule> = {}): ExpoCalendarModule {
   return {

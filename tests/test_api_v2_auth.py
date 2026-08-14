@@ -90,6 +90,45 @@ def test_v2_me_requires_a_valid_session(api) -> None:
     assert response.json()["detail"] == "Invalid authentication credentials"
 
 
+def test_local_dogfood_exchange_returns_a_v2_session(api, monkeypatch) -> None:
+    client, _factory = api
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "app_env", "local")
+    monkeypatch.setattr(settings, "allow_dogfood_auth", True)
+    monkeypatch.setattr(settings, "mobile_dogfood_token", "local-dogfood-secret")
+    monkeypatch.setattr(settings, "mobile_dogfood_user_external_id", "mobile:dogfood")
+
+    response = client.post(
+        "/api/v2/auth/dogfood",
+        headers={"Authorization": "Bearer local-dogfood-secret"},
+        json={"device": {"device_id": "expo-go-1", "platform": "ios"}},
+    )
+
+    assert response.status_code == 200, response.text
+    signed_in = response.json()
+    assert client.get(
+        "/api/v2/me", headers=bearer(signed_in["access_token"])
+    ).json()["public_id"] == signed_in["user"]["public_id"]
+
+
+def test_dogfood_exchange_is_unavailable_outside_local_or_test(api, monkeypatch) -> None:
+    client, _factory = api
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "app_env", "production")
+    monkeypatch.setattr(settings, "allow_dogfood_auth", True)
+    monkeypatch.setattr(settings, "mobile_dogfood_token", "local-dogfood-secret")
+
+    response = client.post(
+        "/api/v2/auth/dogfood",
+        headers={"Authorization": "Bearer local-dogfood-secret"},
+        json={"device": {"device_id": "expo-go-1", "platform": "ios"}},
+    )
+
+    assert response.status_code == 404
+
+
 def test_apple_sign_in_returns_session_and_internal_public_identity(api) -> None:
     client, _factory = api
 

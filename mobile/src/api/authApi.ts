@@ -46,6 +46,13 @@ export interface SignedInSession {
   user: AuthenticatedUser;
 }
 
+export interface DogfoodDeviceInput {
+  deviceId: string;
+  deviceName?: string;
+  platform?: string;
+  osVersion?: string;
+}
+
 export class AuthApiError extends Error {
   constructor(readonly status: number | null) {
     super('Authentication request failed');
@@ -96,6 +103,25 @@ export class AuthApi {
           ...(input.device.osVersion
             ? { os_version: input.device.osVersion }
             : {}),
+        },
+      }),
+    });
+    return toSignedInSession(payload);
+  }
+
+  async signInWithDogfood(
+    token: string,
+    device: DogfoodDeviceInput,
+  ): Promise<SignedInSession> {
+    const payload = await this.request<SignInDto>('/api/v2/auth/dogfood', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        device: {
+          device_id: device.deviceId,
+          ...(device.deviceName ? { device_name: device.deviceName } : {}),
+          ...(device.platform ? { platform: device.platform } : {}),
+          ...(device.osVersion ? { os_version: device.osVersion } : {}),
         },
       }),
     });

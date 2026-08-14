@@ -24,6 +24,7 @@ import { clearUserData } from '../../storage/mobileStorage';
 import {
   type LoadedSession,
   type SessionCredentials,
+  dogfoodSessionStore,
   sessionVault,
 } from '../../storage/sessionStorage';
 import {
@@ -43,6 +44,10 @@ interface AuthContextValue {
     deviceId: string,
   ) => Promise<{ state: string; nonce: string }>;
   signInWithApple: (input: AppleSignInInput) => Promise<void>;
+  signInWithDogfood: (
+    token: string,
+    device: { deviceId: string; platform?: string; osVersion?: string },
+  ) => Promise<void>;
   getAccessToken: () => Promise<string | null>;
   recoverAuthentication: () => Promise<string | null>;
   logout: () => Promise<void>;
@@ -59,6 +64,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     credentials: SessionCredentials;
   } | null>(null);
   const api = useMemo(() => new AuthApi({ baseUrl: apiBaseUrl }), []);
+  const loadActiveSession = useCallback(async (): Promise<LoadedSession | null> =>
+    dogfoodSessionStore.load() ?? sessionVault.load(), []);
 
   const performRefresh = useCallback(async (): Promise<string | null> => {
     const lifecycle = lifecycleRef.current;
@@ -66,7 +73,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     if (epoch === null) return null;
     let session: LoadedSession | null = null;
     try {
-      session = await sessionVault.load();
+      session = await loadActiveSession();
       if (!lifecycle.isCurrent(epoch)) return null;
       if (!session) {
         dispatch({
@@ -78,7 +85,13 @@ export function AuthProvider({ children }: PropsWithChildren) {
       dispatch({ type: 'refresh/started' });
       const rotated = await api.refresh(session.credentials.refreshToken);
       if (!lifecycle.isCurrent(epoch)) return null;
-      if (session.source === 'current' && session.publicUserId) {
+      const dogfoodSession = dogfoodSessionStore.load();
+      if (
+        dogfoodSession?.credentials.refreshToken ===
+        session.credentials.refreshToken
+      ) {
+        dogfoodSessionStore.save(session.publicUserId!, rotated);
+      } else if (session.source === 'current' && session.publicUserId) {
         const commit = await lifecycle.runIfCurrent(epoch, () =>
           sessionVault.save(session!.publicUserId!, rotated),
         );
@@ -109,7 +122,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       });
       return null;
     }
-  }, [api]);
+  }, [api, loadActiveSession]);
 
   const refreshCoordinator = useMemo(
     () => new SessionRefreshCoordinator(performRefresh),
@@ -273,6 +286,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       const lifecycle = lifecycleRef.current;
       const epoch = lifecycle.invalidate();
       pendingUnboundRefreshRef.current = null;
+      dogfoodSessionStore.clear();
       const signedIn = await api.signInWithApple(input);
       if (!lifecycle.isCurrent(epoch)) return;
       const commit = await lifecycle.runIfCurrent(epoch, () =>
@@ -284,14 +298,38 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [api],
   );
 
+  const signInWithDogfood = useCallback(
+    async (
+      token: string,
+      device: { deviceId: string; platform?: string; osVersion?: string },
+    ) => {
+      const lifecycle = lifecycleRef.current;
+      const epoch = lifecycle.invalidate();
+      pendingUnboundRefreshRef.current = null;
+      const signedIn = await api.signInWithDogfood(token, device);
+      if (!lifecycle.isCurrent(epoch)) return;
+      dogfoodSessionStore.save(signedIn.user.publicId, signedIn.credentials);
+      if (!lifecycle.authorizeRecovery(epoch)) return;
+      dispatch({ type: 'session/authenticated', user: signedIn.user });
+    },
+    [api],
+  );
+
   const getAccessToken = useCallback(async () => {
-    return (await sessionVault.load())?.credentials.accessToken ?? null;
-  }, []);
+    return (await loadActiveSession())?.credentials.accessToken ?? null;
+  }, [loadActiveSession]);
 
   const logout = useCallback(async () => {
     const lifecycle = lifecycleRef.current;
     const epoch = lifecycle.blockRecovery();
     pendingUnboundRefreshRef.current = null;
+    const volatileSession = dogfoodSessionStore.load();
+    if (volatileSession) {
+      dogfoodSessionStore.clear();
+      dispatch({ type: 'logout/completed' });
+      void api.logout(volatileSession.credentials.accessToken).catch(() => undefined);
+      return;
+    }
     let localSession: LoadedSession | null = null;
     try {
       const cleared = await lifecycle.runIfCurrent(epoch, async () => {
@@ -325,6 +363,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
     const lifecycle = lifecycleRef.current;
     const epoch = lifecycle.blockRecovery();
     pendingUnboundRefreshRef.current = null;
+    const volatileSession = dogfoodSessionStore.load();
+    if (volatileSession) {
+      await api.deleteAccount(volatileSession.credentials.accessToken);
+      dogfoodSessionStore.clear();
+      void clearUserData(volatileSession.publicUserId!).catch(() => undefined);
+      if (lifecycle.isCurrent(epoch)) dispatch({ type: 'account/deleted' });
+      return;
+    }
     const loaded = await lifecycle.runIfCurrent(epoch, () =>
       sessionVault.load(),
     );
@@ -352,6 +398,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       state,
       createAppleChallenge: (deviceId) => api.challenge(deviceId),
       signInWithApple,
+      signInWithDogfood,
       getAccessToken,
       recoverAuthentication: () => refreshCoordinator.refresh(),
       logout,
@@ -364,6 +411,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       logout,
       refreshCoordinator,
       signInWithApple,
+      signInWithDogfood,
       state,
     ],
   );

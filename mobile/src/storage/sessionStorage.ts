@@ -24,6 +24,22 @@ export interface SecureKeyValueStorage {
   deleteItemAsync(key: string): Promise<void>;
 }
 
+export class VolatileSessionStore {
+  private session: LoadedSession | null = null;
+
+  save(publicUserId: string, credentials: SessionCredentials): void {
+    this.session = { source: 'current', publicUserId, credentials };
+  }
+
+  load(): LoadedSession | null {
+    return this.session;
+  }
+
+  clear(): void {
+    this.session = null;
+  }
+}
+
 const accessTokenKey = 'ai-life-planner.access-token.v1';
 const refreshTokenKey = 'ai-life-planner.refresh-token.v1';
 const sessionEnvelopeKey = 'ai-life-planner.session.v2';
@@ -171,3 +187,4 @@ function decodeSessionEnvelope(value: string): LoadedSession | null {
 }
 
 export const sessionVault = new SessionVault(SecureStore);
+export const dogfoodSessionStore = new VolatileSessionStore();

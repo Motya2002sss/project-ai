@@ -1,4 +1,5 @@
 import { Redirect, useRouter } from 'expo-router';
+import * as Crypto from 'expo-crypto';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -14,6 +15,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { usePlanner } from '../src/features/planner/PlannerProvider';
 import { dogfoodRuntimeEnabled } from '../src/config/environment';
 import { notifyDogfoodAccessChanged } from '../src/features/auth/appGate';
+import { useAuth } from '../src/features/auth/AuthProvider';
 import { colors } from '../src/theme/colors';
 import { radius } from '../src/theme/radius';
 import { spacing } from '../src/theme/spacing';
@@ -22,7 +24,8 @@ import { typography } from '../src/theme/typography';
 export default function SetupRoute() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { apiBaseUrl, updateDogfoodToken } = usePlanner();
+  const { apiBaseUrl } = usePlanner();
+  const { signInWithDogfood } = useAuth();
   const [token, setToken] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +37,11 @@ export default function SetupRoute() {
     setSaving(true);
     setError(null);
     try {
-      await updateDogfoodToken(token);
+      await signInWithDogfood(token.trim(), {
+        deviceId: Crypto.randomUUID(),
+        platform: Platform.OS,
+        osVersion: String(Platform.Version),
+      });
       notifyDogfoodAccessChanged(dogfoodRuntimeEnabled);
       router.replace('/');
     } catch {

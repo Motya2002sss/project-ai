@@ -29,7 +29,7 @@ trap '
   exit "$dogfood_status"
 ' EXIT
 
-cloudflared tunnel --url http://127.0.0.1:8000 --no-autoupdate \
+cloudflared tunnel --url http://127.0.0.1:8000 --protocol http2 --no-autoupdate \
   > >(tee "$dogfood_tunnel_log") 2>&1 &
 dogfood_tunnel_pid=$!
 

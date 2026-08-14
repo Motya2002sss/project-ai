@@ -1,4 +1,8 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import * as Crypto from 'expo-crypto';
 import type { AppleSignInInput } from '../../api/authApi';
+import { Platform } from 'react-native';
 import {
   defaultStorageTimeoutMs,
   withStorageDeadline,
@@ -105,11 +109,6 @@ export async function resolveAppleDeviceMetadata(
 }
 
 export async function getAppleDeviceMetadata(): Promise<AppleDeviceMetadata> {
-  const [{ default: AsyncStorage }, Crypto, { Platform }] = await Promise.all([
-    import('@react-native-async-storage/async-storage'),
-    import('expo-crypto'),
-    import('react-native'),
-  ]);
   return resolveAppleDeviceMetadata({
     storage: AsyncStorage,
     createDeviceId: () => Crypto.randomUUID(),
@@ -119,9 +118,7 @@ export async function getAppleDeviceMetadata(): Promise<AppleDeviceMetadata> {
 }
 
 export async function createNativeAppleAuthorizationAdapter(): Promise<AppleAuthorizationAdapter> {
-  const { Platform } = await import('react-native');
   if (Platform.OS !== 'ios') return unsupportedAdapter;
-  const AppleAuthentication = await import('expo-apple-authentication');
   return {
     isSupported: () => AppleAuthentication.isAvailableAsync(),
     async authorize(challenge) {
